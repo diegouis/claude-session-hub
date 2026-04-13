@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Session Hub</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="top-bar-left">
+        <button class="hamburger" id="hamburger-btn" aria-label="Toggle sidebar">
+          <span></span><span></span><span></span>
+        </button>
+        <h1 class="logo">Claude Session Hub</h1>
+      </div>
+      <div class="stats-bar" id="stats-bar">
+        <div class="stat">
+          <span class="stat-value" id="stat-total">--</span>
+          <span class="stat-label">Sessions</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value stat-active" id="stat-active">--</span>
+          <span class="stat-label">Active</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-tokens">--</span>
+          <span class="stat-label">Tokens</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value" id="stat-projects">--</span>
+          <span class="stat-label">Projects</span>
+        </div>
+        <button class="btn btn-secondary btn-select-mode" id="select-mode-btn" title="Toggle selection mode">
+          Select
+        </button>
+        <button class="btn btn-secondary" id="reindex-btn" title="Re-index sessions">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 1a7 7 0 0 0-7 7h2a5 5 0 0 1 9.17-2.74L10 7h5V2l-1.96 1.96A7 7 0 0 0 8 1zM3 8a5 5 0 0 0 5 5 5 5 0 0 0 4.17-2.26L14 9H9v5l1.96-1.96A7 7 0 0 1 1 8h2z"/>
+          </svg>
+          Reindex
+        </button>
+      </div>
+    </header>
+
+    <div class="main-layout">
+      <!-- Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-section">
+          <div class="search-box">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+              <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.868-3.834zm-5.242.156a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>
+            </svg>
+            <input type="text" id="search-input" placeholder="Search sessions..." autocomplete="off">
+            <button class="search-clear hidden" id="search-clear">&times;</button>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Status</h3>
+          <div class="filter-group" id="status-filters">
+            <label class="filter-option">
+              <input type="radio" name="status" value="all" checked>
+              <span class="filter-label">All</span>
+              <span class="filter-count" id="count-all">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="status" value="active">
+              <span class="status-dot status-active"></span>
+              <span class="filter-label">Active</span>
+              <span class="filter-count" id="count-active">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="status" value="idle">
+              <span class="status-dot status-idle"></span>
+              <span class="filter-label">Idle</span>
+              <span class="filter-count" id="count-idle">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="status" value="stale">
+              <span class="status-dot status-stale"></span>
+              <span class="filter-label">Stale</span>
+              <span class="filter-count" id="count-stale">--</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Projects</h3>
+          <div class="project-filters" id="project-filters">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Sort by</h3>
+          <select id="sort-select" class="sort-select">
+            <option value="date_desc">Date (newest)</option>
+            <option value="date_asc">Date (oldest)</option>
+            <option value="messages_desc">Messages (most)</option>
+            <option value="tokens_desc">Tokens (most)</option>
+            <option value="size_desc">Size (largest)</option>
+          </select>
+        </div>
+
+        <div class="sidebar-section" style="margin-top: auto;">
+          <h3 class="sidebar-heading">Maintenance</h3>
+          <button class="btn btn-ghost btn-block" id="cleanup-btn">🧹 Clean Up Sessions</button>
+          <button class="btn btn-ghost btn-block" id="trash-btn">🗑️ View Trash</button>
+        </div>
+      </aside>
+
+      <!-- Main Content -->
+      <main class="content" id="content">
+        <!-- List view -->
+        <div id="list-view">
+          <div class="session-list" id="session-list">
+            <!-- Populated by JS -->
+          </div>
+          <div class="empty-state hidden" id="empty-state">
+            <div class="empty-icon">
+              <svg width="48" height="48" viewBox="0 0 48 48" fill="currentColor" opacity="0.3">
+                <rect x="6" y="10" width="36" height="28" rx="4" fill="none" stroke="currentColor" stroke-width="2"/>
+                <text x="14" y="30" font-family="monospace" font-size="16">&gt;_</text>
+              </svg>
+            </div>
+            <p class="empty-text" id="empty-text">No sessions found</p>
+            <p class="empty-hint">Try adjusting your filters or search query</p>
+          </div>
+          <div class="loading-spinner hidden" id="list-loading">
+            <div class="spinner"></div>
+            <span>Loading sessions...</span>
+          </div>
+        </div>
+
+        <!-- Detail view -->
+        <div id="detail-view" class="hidden">
+          <div class="detail-header">
+            <button class="btn btn-ghost" id="back-btn">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M10.5 1.5L4 8l6.5 6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Back
+            </button>
+            <div class="detail-title-area">
+              <h2 class="detail-title" id="detail-title"></h2>
+              <div class="detail-meta" id="detail-meta"></div>
+            </div>
+            <div class="detail-actions">
+              <button class="star-btn" id="detail-star-btn" title="Star / Unstar"></button>
+              <button class="btn btn-secondary" id="detail-export-btn" title="Export as Markdown">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M2 14h12v-2H2v2zm6-12v7.17l2.59-2.58L12 8l-4 4-4-4 1.41-1.41L8 9.17V2h2z"/>
+                </svg>
+                Export
+              </button>
+              <button class="btn btn-secondary" id="detail-archive-btn" title="Archive session">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M1 3h14v2H1V3zm1 3h12v8H2V6zm4 2v2h4V8H6z"/>
+                </svg>
+                Archive
+              </button>
+              <button class="btn btn-secondary" id="copy-resume-btn" title="Copy resume command">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M4 4v10h10V4H4zm-1-1h12v12H3V3z"/>
+                  <path d="M1 1v10h1V2h9V1H1z"/>
+                </svg>
+                Copy Command
+              </button>
+              <button class="btn btn-primary" id="resume-btn">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M4 2l10 6-10 6V2z"/>
+                </svg>
+                Resume Session
+              </button>
+              <button class="btn btn-danger" id="detail-delete-btn" title="Delete session">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M5 2V1h6v1h4v2H1V2h4zm1 4v8h4V6H6zM2 4h12l-1 12H3L2 4z"/>
+                </svg>
+                Delete
+              </button>
+            </div>
+          </div>
+          <div class="conversation" id="conversation">
+            <!-- Messages populated by JS -->
+          </div>
+          <div class="loading-spinner hidden" id="messages-loading">
+            <div class="spinner"></div>
+            <span>Loading messages...</span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Context Menu -->
+    <div id="context-menu" class="context-menu hidden"></div>
+
+    <!-- Confirm Dialog -->
+    <div id="confirm-dialog" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <h3 id="confirm-title"></h3>
+        <p id="confirm-message"></p>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+          <button class="btn btn-danger" id="confirm-ok">Delete</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Rename Dialog -->
+    <div id="rename-dialog" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <h3>Rename Session</h3>
+        <input type="text" id="rename-input" placeholder="Enter a name for this session">
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="rename-cancel">Cancel</button>
+          <button class="btn btn-primary" id="rename-save">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Cleanup Dialog -->
+    <div id="cleanup-dialog" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <h3>Clean Up Sessions</h3>
+        <p>Select which sessions to remove:</p>
+        <div id="cleanup-options"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="cleanup-cancel">Cancel</button>
+          <button class="btn btn-danger" id="cleanup-confirm">Clean Up</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trash Dialog -->
+    <div id="trash-dialog" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content" style="max-width: 600px;">
+        <h3>Trash</h3>
+        <div id="trash-list" class="trash-list"></div>
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="trash-close">Close</button>
+          <button class="btn btn-danger" id="trash-empty">Empty Trash</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bulk Action Bar -->
+    <div id="bulk-bar" class="bulk-bar hidden">
+      <div class="bulk-bar-left">
+        <span id="bulk-count">0</span> selected
+      </div>
+      <div class="bulk-bar-actions">
+        <button class="btn btn-secondary" id="bulk-star-btn">Star Selected</button>
+        <button class="btn btn-secondary" id="bulk-archive-btn">Archive Selected</button>
+        <button class="btn btn-danger" id="bulk-delete-btn">Delete Selected</button>
+        <button class="btn btn-ghost" id="bulk-clear-btn">Clear Selection</button>
+      </div>
+    </div>
+
+    <!-- Toast notifications -->
+    <div class="toast-container" id="toast-container"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

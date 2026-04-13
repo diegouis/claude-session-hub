@@ -1,0 +1,1531 @@
+/* ============================================================
+   Claude Session Hub — Client-Side Application
+   ============================================================ */
+
+const SessionHub = (() => {
+  // --- State ---
+  const state = {
+    sessions: [],
+    filteredSessions: [],
+    projects: [],
+    stats: { total: 0, active: 0, tokens: 0, projects: 0 },
+    currentView: 'list',       // 'list' | 'detail'
+    currentSessionId: null,
+    currentPage: 0,
+    hasMoreMessages: true,
+    loadingMessages: false,
+    filters: {
+      status: 'all',
+      projects: new Set(),
+      sort: 'date_desc',
+      search: '',
+    },
+    searchResults: null,
+    sseRetryDelay: 1000,
+    projectColors: {},
+    selectMode: false,
+    selectedIds: new Set(),
+    trash: [],
+    contextMenuSessionId: null,
+  };
+
+  // Palette for project pills
+  const PROJECT_COLORS = [
+    '#4fc3f7', '#ab47bc', '#66bb6a', '#ffa726', '#ef5350',
+    '#26c6da', '#ec407a', '#8d6e63', '#78909c', '#d4e157',
+    '#7e57c2', '#ffca28', '#5c6bc0', '#29b6f6', '#ff7043',
+  ];
+
+  // --- DOM refs ---
+  const $ = (sel) => document.querySelector(sel);
+  const $$ = (sel) => document.querySelectorAll(sel);
+
+  const dom = {};
+  function cacheDom() {
+    dom.sidebar = $('#sidebar');
+    dom.hamburger = $('#hamburger-btn');
+    dom.searchInput = $('#search-input');
+    dom.searchClear = $('#search-clear');
+    dom.statusFilters = $('#status-filters');
+    dom.projectFilters = $('#project-filters');
+    dom.sortSelect = $('#sort-select');
+    dom.sessionList = $('#session-list');
+    dom.emptyState = $('#empty-state');
+    dom.emptyText = $('#empty-text');
+    dom.listView = $('#list-view');
+    dom.detailView = $('#detail-view');
+    dom.listLoading = $('#list-loading');
+    dom.messagesLoading = $('#messages-loading');
+    dom.conversation = $('#conversation');
+    dom.detailTitle = $('#detail-title');
+    dom.detailMeta = $('#detail-meta');
+    dom.backBtn = $('#back-btn');
+    dom.resumeBtn = $('#resume-btn');
+    dom.copyResumeBtn = $('#copy-resume-btn');
+    dom.reindexBtn = $('#reindex-btn');
+    dom.statTotal = $('#stat-total');
+    dom.statActive = $('#stat-active');
+    dom.statTokens = $('#stat-tokens');
+    dom.statProjects = $('#stat-projects');
+    dom.toastContainer = $('#toast-container');
+    dom.content = $('#content');
+    dom.contextMenu = $('#context-menu');
+    dom.confirmDialog = $('#confirm-dialog');
+    dom.confirmTitle = $('#confirm-title');
+    dom.confirmMessage = $('#confirm-message');
+    dom.confirmCancel = $('#confirm-cancel');
+    dom.confirmOk = $('#confirm-ok');
+    dom.renameDialog = $('#rename-dialog');
+    dom.renameInput = $('#rename-input');
+    dom.renameCancel = $('#rename-cancel');
+    dom.renameSave = $('#rename-save');
+    dom.cleanupDialog = $('#cleanup-dialog');
+    dom.cleanupOptions = $('#cleanup-options');
+    dom.cleanupCancel = $('#cleanup-cancel');
+    dom.cleanupConfirm = $('#cleanup-confirm');
+    dom.trashDialog = $('#trash-dialog');
+    dom.trashList = $('#trash-list');
+    dom.trashClose = $('#trash-close');
+    dom.trashEmpty = $('#trash-empty');
+    dom.bulkBar = $('#bulk-bar');
+    dom.bulkCount = $('#bulk-count');
+    dom.bulkStarBtn = $('#bulk-star-btn');
+    dom.bulkArchiveBtn = $('#bulk-archive-btn');
+    dom.bulkDeleteBtn = $('#bulk-delete-btn');
+    dom.bulkClearBtn = $('#bulk-clear-btn');
+    dom.selectModeBtn = $('#select-mode-btn');
+    dom.cleanupBtn = $('#cleanup-btn');
+    dom.trashBtn = $('#trash-btn');
+    dom.detailStarBtn = $('#detail-star-btn');
+    dom.detailArchiveBtn = $('#detail-archive-btn');
+    dom.detailDeleteBtn = $('#detail-delete-btn');
+    dom.detailExportBtn = $('#detail-export-btn');
+  }
+
+  // --- API Client ---
+  const api = {
+    async get(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`GET ${url}: ${res.status}`);
+      return res.json();
+    },
+    async post(url, body) {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(`POST ${url}: ${res.status}`);
+      return res.json();
+    },
+    async patch(url, body) {
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) throw new Error(`PATCH ${url}: ${res.status}`);
+      return res.json();
+    },
+    async delete(url) {
+      const res = await fetch(url, { method: 'DELETE' });
+      if (!res.ok) throw new Error(`DELETE ${url}: ${res.status}`);
+      return res.json();
+    },
+  };
+
+  // --- Utility functions ---
+
+  function formatRelativeTime(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+    const diffDay = Math.floor(diffHour / 24);
+    const diffWeek = Math.floor(diffDay / 7);
+
+    if (diffSec < 60) return 'just now';
+    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffHour < 24) return `${diffHour}h ago`;
+    if (diffDay < 7) return `${diffDay}d ago`;
+    if (diffWeek < 5) return `${diffWeek}w ago`;
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function formatNumber(n) {
+    if (n == null) return '--';
+    if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+    if (n >= 1_000) return (n / 1_000).toFixed(1) + 'k';
+    return String(n);
+  }
+
+  function formatBytes(bytes) {
+    if (bytes == null) return '';
+    if (bytes >= 1_048_576) return (bytes / 1_048_576).toFixed(1) + ' MB';
+    if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return bytes + ' B';
+  }
+
+  function escapeHtml(str) {
+    const el = document.createElement('span');
+    el.textContent = str;
+    return el.innerHTML;
+  }
+
+  function debounce(fn, ms) {
+    let timer;
+    return (...args) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), ms);
+    };
+  }
+
+  function getProjectColor(name) {
+    if (!name) return PROJECT_COLORS[0];
+    if (!state.projectColors[name]) {
+      const idx = Object.keys(state.projectColors).length % PROJECT_COLORS.length;
+      state.projectColors[name] = PROJECT_COLORS[idx];
+    }
+    return state.projectColors[name];
+  }
+
+  function truncate(str, len = 100) {
+    if (!str) return '';
+    return str.length > len ? str.slice(0, len) + '...' : str;
+  }
+
+  // --- Minimal Markdown Renderer ---
+  function renderMarkdown(text) {
+    if (!text) return '';
+    let html = escapeHtml(text);
+
+    // Code blocks (``` ... ```)
+    html = html.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+      return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+    });
+
+    // Inline code
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+    // Headers
+    html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+    // Bold & italic
+    html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+    // Links
+    html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+
+    // Unordered lists
+    html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+    html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`);
+
+    // Paragraphs: convert double newlines to <p> tags, single newlines to <br>
+    html = html.replace(/\n{2,}/g, '</p><p>');
+    // Avoid <br> inside <pre>
+    html = html.replace(/(?<!<\/code>)\n(?!<)/g, '<br>');
+
+    // Wrap in paragraph if not starting with a block element
+    if (!/^<(h[1-3]|pre|ul|ol|p)/.test(html)) {
+      html = '<p>' + html + '</p>';
+    }
+
+    return html;
+  }
+
+  // --- Rendering ---
+
+  function renderStatusBadge(status) {
+    const s = status || 'stale';
+    return `<span class="status-badge ${s}"><span class="badge-dot"></span>${s}</span>`;
+  }
+
+  function renderSessionCard(session, snippet) {
+    const color = getProjectColor(session.project);
+    const card = document.createElement('div');
+    card.className = 'session-card';
+    if (session.starred) card.classList.add('starred');
+    card.dataset.sessionId = session.id;
+
+    const isSelected = state.selectedIds.has(session.id);
+    const displayTitle = session.label || session.custom_label || session.title || 'Untitled session';
+    const subtitle = (session.label || session.custom_label) && session.title ? session.title : null;
+    const starHtml = session.starred ? '<span class="star-icon">&#11088;</span>' : '';
+    const subagentHtml = session.is_subagent ? '<span class="subagent-badge">subagent</span>' : '';
+
+    card.innerHTML = `
+      ${state.selectMode ? `<div class="session-card-checkbox ${isSelected ? 'checked' : ''}" data-select-id="${session.id}"></div>` : ''}
+      <div class="session-card-body">
+        <div class="session-card-title-row">
+          ${starHtml}
+          ${subagentHtml}
+          <div class="session-card-title">${escapeHtml(truncate(displayTitle, 120))}</div>
+        </div>
+        ${subtitle ? `<div class="session-card-subtitle">${escapeHtml(truncate(subtitle, 100))}</div>` : ''}
+        ${session.project ? `
+          <span class="session-card-project">
+            <span class="project-dot" style="background:${color}"></span>
+            ${escapeHtml(session.project)}
+          </span>
+        ` : ''}
+        <div class="session-card-meta">
+          <span>${session.message_count ?? 0} messages</span>
+          ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
+          ${session.total_tokens != null ? `<span>${formatNumber(session.total_tokens)} tokens</span>` : ''}
+          ${session.file_size != null ? `<span>${formatBytes(session.file_size)}</span>` : ''}
+        </div>
+        ${snippet ? `<div class="search-snippet">${snippet}</div>` : ''}
+      </div>
+      <div class="session-card-right">
+        <span class="session-card-time">${formatRelativeTime(session.updated_at || session.created_at)}</span>
+        ${renderStatusBadge(session.status)}
+        <button class="btn btn-secondary btn-sm card-resume-btn" data-resume="${session.id}" title="Resume session" onclick="event.stopPropagation()">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
+          Resume
+        </button>
+      </div>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (state.selectMode) {
+        e.preventDefault();
+        toggleSelection(session.id);
+        return;
+      }
+      showSessionDetail(session.id);
+    });
+
+    card.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      showContextMenu(e, session);
+    });
+
+    const resumeBtn = card.querySelector('.card-resume-btn');
+    resumeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      resumeSession(session.id);
+    });
+
+    return card;
+  }
+
+  function renderFilterBanner() {
+    // Show a banner above the list when filters are active
+    let existing = document.getElementById('filter-banner');
+    if (existing) existing.remove();
+
+    const parts = [];
+    if (state.filters.status !== 'all') {
+      parts.push(`Status: <strong>${state.filters.status}</strong>`);
+    }
+    if (state.filters.projects.size > 0) {
+      const names = [...state.filters.projects].join(', ');
+      parts.push(`Projects: <strong>${escapeHtml(names)}</strong>`);
+    }
+    if (state.searchResults) {
+      parts.push(`Search: <strong>${escapeHtml(state.filters.search)}</strong>`);
+    }
+
+    if (parts.length === 0) return;
+
+    const count = (state.searchResults || state.filteredSessions).length;
+    const banner = document.createElement('div');
+    banner.id = 'filter-banner';
+    banner.className = 'filter-banner';
+    banner.innerHTML = `
+      <span class="filter-banner-text">${parts.join(' &middot; ')} &mdash; ${count} results</span>
+      <button class="filter-banner-clear" onclick="document.dispatchEvent(new CustomEvent('clear-all-filters'))">Clear all</button>
+    `;
+    dom.sessionList.parentNode.insertBefore(banner, dom.sessionList);
+  }
+
+  function renderSessionList() {
+    const list = dom.sessionList;
+    list.innerHTML = '';
+
+    const sessions = state.searchResults || state.filteredSessions;
+
+    renderFilterBanner();
+
+    if (sessions.length === 0) {
+      dom.emptyState.classList.remove('hidden');
+      dom.emptyText.textContent = state.filters.search
+        ? 'No sessions match your search'
+        : 'No sessions found';
+      return;
+    }
+    dom.emptyState.classList.add('hidden');
+
+    // Group by project
+    const grouped = new Map();
+    for (const s of sessions) {
+      const proj = s.project || 'Unknown Project';
+      if (!grouped.has(proj)) grouped.set(proj, []);
+      grouped.get(proj).push(s);
+    }
+
+    for (const [project, items] of grouped) {
+      const color = getProjectColor(project);
+      const header = document.createElement('div');
+      header.className = 'session-group-header';
+      header.innerHTML = `
+        <span class="session-group-pill" style="background:${color}22;color:${color}">
+          <span style="width:8px;height:8px;border-radius:2px;background:${color};display:inline-block"></span>
+          ${escapeHtml(project)} (${items.length})
+        </span>
+        <span class="session-group-line"></span>
+      `;
+      list.appendChild(header);
+
+      for (const session of items) {
+        const snippet = session._searchSnippet || null;
+        list.appendChild(renderSessionCard(session, snippet));
+      }
+    }
+  }
+
+  function renderProjectFilters() {
+    const container = dom.projectFilters;
+    container.innerHTML = '';
+
+    for (const p of state.projects) {
+      const color = getProjectColor(p.name);
+      const label = document.createElement('label');
+      label.className = 'project-filter';
+      label.innerHTML = `
+        <input type="checkbox" value="${escapeHtml(p.name)}" ${state.filters.projects.has(p.name) ? 'checked' : ''}>
+        <span class="project-pill" style="background:${color}"></span>
+        <span class="project-name">${escapeHtml(p.name)}</span>
+        <span class="project-count">${p.count}</span>
+      `;
+      label.querySelector('input').addEventListener('change', (e) => {
+        if (e.target.checked) {
+          state.filters.projects.add(p.name);
+        } else {
+          state.filters.projects.delete(p.name);
+        }
+        applyFilters();
+      });
+      container.appendChild(label);
+    }
+  }
+
+  function renderStats() {
+    dom.statTotal.textContent = formatNumber(state.stats.total);
+    dom.statActive.textContent = formatNumber(state.stats.active);
+    dom.statTokens.textContent = formatNumber(state.stats.tokens);
+    dom.statProjects.textContent = formatNumber(state.stats.projects);
+
+    // Counts in sidebar
+    const counts = { all: 0, active: 0, idle: 0, stale: 0 };
+    for (const s of state.sessions) {
+      counts.all++;
+      const st = s.status || 'stale';
+      if (counts[st] !== undefined) counts[st]++;
+    }
+    const countAll = $('#count-all');
+    const countActive = $('#count-active');
+    const countIdle = $('#count-idle');
+    const countStale = $('#count-stale');
+    if (countAll) countAll.textContent = counts.all;
+    if (countActive) countActive.textContent = counts.active;
+    if (countIdle) countIdle.textContent = counts.idle;
+    if (countStale) countStale.textContent = counts.stale;
+  }
+
+  // --- Filtering & Sorting ---
+
+  function applyFilters() {
+    let sessions = [...state.sessions];
+
+    // Status filter
+    if (state.filters.status !== 'all') {
+      sessions = sessions.filter(s => s.status === state.filters.status);
+    }
+
+    // Project filter
+    if (state.filters.projects.size > 0) {
+      sessions = sessions.filter(s => state.filters.projects.has(s.project));
+    }
+
+    // Sort — starred sessions always first
+    const [field, dir] = state.filters.sort.split('_');
+    const mult = dir === 'desc' ? -1 : 1;
+    sessions.sort((a, b) => {
+      // Starred sessions come first regardless of sort
+      const starA = a.starred ? 1 : 0;
+      const starB = b.starred ? 1 : 0;
+      if (starA !== starB) return starB - starA;
+
+      let va, vb;
+      switch (field) {
+        case 'date':
+          va = new Date(a.updated_at || a.created_at || 0).getTime();
+          vb = new Date(b.updated_at || b.created_at || 0).getTime();
+          break;
+        case 'messages':
+          va = a.message_count || 0;
+          vb = b.message_count || 0;
+          break;
+        case 'tokens':
+          va = a.total_tokens || 0;
+          vb = b.total_tokens || 0;
+          break;
+        case 'size':
+          va = a.file_size || 0;
+          vb = b.file_size || 0;
+          break;
+        default:
+          va = 0; vb = 0;
+      }
+      return (va - vb) * mult;
+    });
+
+    state.filteredSessions = sessions;
+    state.searchResults = null;
+    renderSessionList();
+  }
+
+  // --- Search ---
+
+  async function performSearch(query) {
+    if (!query.trim()) {
+      state.searchResults = null;
+      dom.searchClear.classList.add('hidden');
+      renderSessionList();
+      return;
+    }
+    dom.searchClear.classList.remove('hidden');
+    try {
+      const data = await api.get(`/api/search?q=${encodeURIComponent(query)}`);
+      // data.results is an array of { session, snippet }
+      const results = (data.results || []).map(r => {
+        const s = r.session || r;
+        s._searchSnippet = r.snippet || null;
+        return s;
+      });
+      state.searchResults = results;
+      renderSessionList();
+    } catch (err) {
+      console.error('Search failed:', err);
+      toast('Search failed', 'error');
+    }
+  }
+
+  const debouncedSearch = debounce(performSearch, 300);
+
+  // --- Session Detail ---
+
+  async function showSessionDetail(sessionId) {
+    state.currentView = 'detail';
+    state.currentSessionId = sessionId;
+    state.currentPage = 0;
+    state.hasMoreMessages = true;
+
+    dom.listView.classList.add('hidden');
+    dom.detailView.classList.remove('hidden');
+    dom.conversation.innerHTML = '';
+
+    // Find session info from state or fetch it
+    let session = state.sessions.find(s => s.id === sessionId);
+    if (!session) {
+      try {
+        session = await api.get(`/api/sessions/${sessionId}`);
+      } catch {
+        toast('Failed to load session', 'error');
+        showListView();
+        return;
+      }
+    }
+
+    const displayTitle = session.custom_label || session.title || 'Untitled session';
+    dom.detailTitle.textContent = truncate(displayTitle, 200);
+    const color = getProjectColor(session.project);
+    dom.detailMeta.innerHTML = `
+      ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
+      ${renderStatusBadge(session.status)}
+      <span>${formatRelativeTime(session.updated_at || session.created_at)}</span>
+      <span>${session.message_count ?? 0} messages</span>
+      ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
+      ${session.total_tokens != null ? `<span>${formatNumber(session.total_tokens)} tokens</span>` : ''}
+    `;
+
+    // Update star button
+    updateDetailStarButton(session);
+
+    // Set up resume button
+    dom.resumeBtn.onclick = () => resumeSession(sessionId);
+    dom.copyResumeBtn.onclick = () => copyResumeCommand(sessionId);
+    dom.detailArchiveBtn.onclick = () => archiveSession(sessionId);
+    dom.detailDeleteBtn.onclick = () => confirmDeleteSession(sessionId);
+    dom.detailExportBtn.onclick = () => exportSession(sessionId);
+    dom.detailStarBtn.onclick = () => toggleStar(sessionId);
+
+    // Load first page of messages
+    await loadMessages(sessionId, 0);
+  }
+
+  async function loadMessages(sessionId, page) {
+    if (state.loadingMessages || !state.hasMoreMessages) return;
+    state.loadingMessages = true;
+    dom.messagesLoading.classList.remove('hidden');
+
+    try {
+      const data = await api.get(`/api/sessions/${sessionId}/messages?page=${page}&limit=50`);
+      const messages = data.messages || [];
+
+      if (messages.length < 50) {
+        state.hasMoreMessages = false;
+      }
+      state.currentPage = page;
+
+      for (const msg of messages) {
+        dom.conversation.appendChild(renderMessage(msg));
+      }
+    } catch (err) {
+      console.error('Failed to load messages:', err);
+      if (page === 0) {
+        dom.conversation.innerHTML = '<div class="empty-state"><p class="empty-text">Failed to load conversation</p></div>';
+      }
+    } finally {
+      state.loadingMessages = false;
+      dom.messagesLoading.classList.add('hidden');
+    }
+  }
+
+  function renderMessage(msg) {
+    const role = msg.role || 'system';
+    const el = document.createElement('div');
+    el.className = `message ${role}`;
+
+    let content = '';
+
+    // Role label
+    content += `<div class="message-role">${escapeHtml(role)}</div>`;
+
+    // Text content
+    if (msg.text) {
+      content += `<div class="message-content">${renderMarkdown(msg.text)}</div>`;
+    }
+
+    // Tool use blocks
+    if (msg.tool_calls && msg.tool_calls.length > 0) {
+      for (const tc of msg.tool_calls) {
+        content += renderToolCall(tc);
+      }
+    }
+
+    // Tool result
+    if (msg.tool_result) {
+      content += renderToolResult(msg.tool_result);
+    }
+
+    el.innerHTML = content;
+
+    // Wire up collapsible tool calls and results
+    el.querySelectorAll('.tool-call-header, .tool-result-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const body = header.nextElementSibling;
+        const chevron = header.querySelector('.chevron');
+        body.classList.toggle('open');
+        if (chevron) chevron.classList.toggle('open');
+      });
+    });
+
+    return el;
+  }
+
+  function renderToolCall(tc) {
+    const name = tc.name || tc.tool_name || 'unknown';
+    const input = tc.input || tc.arguments || tc.params || {};
+    const inputStr = typeof input === 'string' ? input : JSON.stringify(input, null, 2);
+    return `
+      <div class="tool-call">
+        <div class="tool-call-header">
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M4 2l5 4-5 4z"/>
+          </svg>
+          Show tool call: <span class="tool-call-name">${escapeHtml(name)}</span>
+        </div>
+        <div class="tool-call-body"><pre><code>${escapeHtml(inputStr)}</code></pre></div>
+      </div>
+    `;
+  }
+
+  function renderToolResult(result) {
+    const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    return `
+      <div class="tool-result">
+        <div class="tool-result-header">
+          <svg class="chevron" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+            <path d="M4 2l5 4-5 4z"/>
+          </svg>
+          Show tool result
+        </div>
+        <div class="tool-result-body"><pre><code>${escapeHtml(text)}</code></pre></div>
+      </div>
+    `;
+  }
+
+  function updateDetailStarButton(session) {
+    if (dom.detailStarBtn) {
+      dom.detailStarBtn.textContent = session.starred ? '\u2B50' : '\u2606';
+      dom.detailStarBtn.title = session.starred ? 'Unstar' : 'Star';
+    }
+  }
+
+  // --- Context Menu ---
+
+  function showContextMenu(e, session) {
+    state.contextMenuSessionId = session.id;
+    const menu = dom.contextMenu;
+    const isStarred = session.starred;
+
+    menu.innerHTML = '';
+    const items = [
+      { label: '\u25B6 Resume in Terminal', action: () => resumeSession(session.id) },
+      { label: '\uD83D\uDCCB Copy Resume Command', action: () => copyResumeCommand(session.id) },
+      { separator: true },
+      { label: isStarred ? '\u2B50 Unstar' : '\u2B50 Star', action: () => toggleStar(session.id) },
+      { label: '\u270F\uFE0F Rename...', action: () => showRenameDialog(session.id) },
+      { label: '\uD83D\uDCE6 Archive', action: () => archiveSession(session.id) },
+      { separator: true },
+      { label: '\uD83D\uDCC4 Export as Markdown', action: () => exportSession(session.id) },
+      { separator: true },
+      { label: '\uD83D\uDDD1\uFE0F Delete', action: () => confirmDeleteSession(session.id), danger: true },
+    ];
+
+    for (const item of items) {
+      if (item.separator) {
+        const sep = document.createElement('div');
+        sep.className = 'context-menu-separator';
+        menu.appendChild(sep);
+        continue;
+      }
+      const el = document.createElement('div');
+      el.className = 'context-menu-item' + (item.danger ? ' danger' : '');
+      el.textContent = item.label;
+      el.addEventListener('click', () => {
+        hideContextMenu();
+        item.action();
+      });
+      menu.appendChild(el);
+    }
+
+    // Position menu at mouse, keeping it on screen
+    menu.classList.remove('hidden');
+    const rect = menu.getBoundingClientRect();
+    let x = e.clientX;
+    let y = e.clientY;
+    if (x + rect.width > window.innerWidth) x = window.innerWidth - rect.width - 4;
+    if (y + rect.height > window.innerHeight) y = window.innerHeight - rect.height - 4;
+    menu.style.left = x + 'px';
+    menu.style.top = y + 'px';
+  }
+
+  function hideContextMenu() {
+    dom.contextMenu.classList.add('hidden');
+    state.contextMenuSessionId = null;
+  }
+
+  // --- Confirm Dialog ---
+
+  function showConfirmDialog(title, message, okLabel, onConfirm) {
+    dom.confirmTitle.textContent = title;
+    dom.confirmMessage.textContent = message;
+    dom.confirmOk.textContent = okLabel || 'Delete';
+    dom.confirmDialog.classList.remove('hidden');
+
+    const cleanup = () => {
+      dom.confirmDialog.classList.add('hidden');
+      dom.confirmOk.onclick = null;
+      dom.confirmCancel.onclick = null;
+    };
+
+    dom.confirmOk.onclick = () => { cleanup(); onConfirm(); };
+    dom.confirmCancel.onclick = cleanup;
+    dom.confirmDialog.querySelector('.modal-backdrop').onclick = cleanup;
+  }
+
+  // --- Rename Dialog ---
+
+  function showRenameDialog(sessionId) {
+    const session = state.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+
+    dom.renameInput.value = session.custom_label || session.title || '';
+    dom.renameDialog.classList.remove('hidden');
+    dom.renameInput.focus();
+    dom.renameInput.select();
+
+    const cleanup = () => {
+      dom.renameDialog.classList.add('hidden');
+      dom.renameSave.onclick = null;
+      dom.renameCancel.onclick = null;
+    };
+
+    dom.renameSave.onclick = async () => {
+      const newName = dom.renameInput.value.trim();
+      cleanup();
+      if (!newName) return;
+      try {
+        await api.patch(`/api/sessions/${sessionId}/label`, { label: newName });
+        const idx = state.sessions.findIndex(s => s.id === sessionId);
+        if (idx !== -1) {
+          state.sessions[idx].label = newName;
+          state.sessions[idx].title = newName;
+        }
+        applyFilters();
+        if (state.currentSessionId === sessionId) {
+          dom.detailTitle.textContent = truncate(newName, 200);
+        }
+        toast('Session renamed', 'success');
+      } catch (err) {
+        console.error('Rename failed:', err);
+        toast('Failed to rename session', 'error');
+      }
+    };
+    dom.renameCancel.onclick = cleanup;
+    dom.renameDialog.querySelector('.modal-backdrop').onclick = cleanup;
+
+    dom.renameInput.onkeydown = (e) => {
+      if (e.key === 'Enter') dom.renameSave.onclick();
+      if (e.key === 'Escape') cleanup();
+    };
+  }
+
+  // --- Session Actions ---
+
+  async function toggleStar(sessionId) {
+    const session = state.sessions.find(s => s.id === sessionId);
+    if (!session) return;
+    const newStarred = !session.starred;
+    try {
+      const endpoint = newStarred ? 'star' : 'unstar';
+      await api.post(`/api/sessions/${sessionId}/${endpoint}`);
+      session.starred = newStarred;
+      applyFilters();
+      if (state.currentSessionId === sessionId) {
+        updateDetailStarButton(session);
+      }
+      toast(newStarred ? 'Session starred' : 'Session unstarred', 'success');
+    } catch (err) {
+      console.error('Star toggle failed:', err);
+      toast('Failed to update star', 'error');
+    }
+  }
+
+  async function archiveSession(sessionId) {
+    try {
+      await api.post(`/api/sessions/${sessionId}/archive`);
+      const idx = state.sessions.findIndex(s => s.id === sessionId);
+      if (idx !== -1) state.sessions.splice(idx, 1);
+      applyFilters();
+      renderStats();
+      if (state.currentSessionId === sessionId) showListView();
+      toast('Session archived', 'success');
+    } catch (err) {
+      console.error('Archive failed:', err);
+      toast('Failed to archive session', 'error');
+    }
+  }
+
+  function confirmDeleteSession(sessionId) {
+    const session = state.sessions.find(s => s.id === sessionId);
+    const title = session ? truncate(session.custom_label || session.title || 'Untitled session', 60) : 'this session';
+    showConfirmDialog(
+      'Delete Session',
+      `Are you sure you want to delete "${title}"? It will be moved to trash.`,
+      'Delete',
+      () => deleteSession(sessionId)
+    );
+  }
+
+  async function deleteSession(sessionId) {
+    try {
+      await api.delete(`/api/sessions/${sessionId}`);
+      const idx = state.sessions.findIndex(s => s.id === sessionId);
+      if (idx !== -1) {
+        const removed = state.sessions.splice(idx, 1)[0];
+        state.trash.push(removed);
+      }
+      applyFilters();
+      renderStats();
+      if (state.currentSessionId === sessionId) showListView();
+      toast('Session moved to trash', 'success');
+    } catch (err) {
+      console.error('Delete failed:', err);
+      toast('Failed to delete session', 'error');
+    }
+  }
+
+  async function exportSession(sessionId) {
+    try {
+      const data = await api.get(`/api/sessions/${sessionId}/export`);
+      const content = data.markdown || data.content || JSON.stringify(data, null, 2);
+      const blob = new Blob([content], { type: 'text/markdown' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `session-${sessionId.slice(0, 8)}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast('Session exported', 'success');
+    } catch (err) {
+      console.error('Export failed:', err);
+      toast('Failed to export session', 'error');
+    }
+  }
+
+  // --- Select Mode / Bulk Actions ---
+
+  function toggleSelectMode() {
+    state.selectMode = !state.selectMode;
+    state.selectedIds.clear();
+    dom.selectModeBtn.classList.toggle('active', state.selectMode);
+    dom.selectModeBtn.textContent = state.selectMode ? 'Cancel Select' : 'Select';
+    updateBulkBar();
+    renderSessionList();
+  }
+
+  function toggleSelection(sessionId) {
+    if (state.selectedIds.has(sessionId)) {
+      state.selectedIds.delete(sessionId);
+    } else {
+      state.selectedIds.add(sessionId);
+    }
+    updateBulkBar();
+
+    // Update the checkbox visually without full re-render
+    const card = dom.sessionList.querySelector(`[data-session-id="${sessionId}"]`);
+    if (card) {
+      const cb = card.querySelector('.session-card-checkbox');
+      if (cb) cb.classList.toggle('checked', state.selectedIds.has(sessionId));
+    }
+  }
+
+  function updateBulkBar() {
+    const count = state.selectedIds.size;
+    if (state.selectMode && count > 0) {
+      dom.bulkBar.classList.remove('hidden');
+      dom.bulkCount.textContent = count;
+    } else {
+      dom.bulkBar.classList.add('hidden');
+    }
+  }
+
+  async function bulkStar() {
+    const ids = [...state.selectedIds];
+    try {
+      await api.post('/api/sessions/bulk/star', { session_ids: ids });
+      for (const id of ids) {
+        const session = state.sessions.find(s => s.id === id);
+        if (session) session.starred = true;
+      }
+    } catch (err) {
+      console.error('Bulk star failed:', err);
+    }
+    const done = ids.length;
+    state.selectedIds.clear();
+    updateBulkBar();
+    applyFilters();
+    toast(`Starred ${done} session${done !== 1 ? 's' : ''}`, 'success');
+  }
+
+  async function bulkArchive() {
+    const ids = [...state.selectedIds];
+    showConfirmDialog(
+      'Archive Sessions',
+      `Are you sure you want to archive ${ids.length} session${ids.length !== 1 ? 's' : ''}?`,
+      'Archive',
+      async () => {
+        try {
+          const res = await api.post('/api/sessions/bulk/archive', { session_ids: ids });
+          const done = res.count || ids.length;
+          // Remove archived from local state
+          state.sessions = state.sessions.filter(s => !ids.includes(s.id));
+          state.selectedIds.clear();
+          updateBulkBar();
+          applyFilters();
+          renderStats();
+          toast(`Archived ${done} session${done !== 1 ? 's' : ''}`, 'success');
+        } catch (err) {
+          console.error('Bulk archive failed:', err);
+          toast('Failed to archive sessions', 'error');
+        }
+      }
+    );
+  }
+
+  async function bulkDelete() {
+    const ids = [...state.selectedIds];
+    showConfirmDialog(
+      'Delete Sessions',
+      `Are you sure you want to delete ${ids.length} session${ids.length !== 1 ? 's' : ''}? They will be moved to trash.`,
+      'Delete',
+      async () => {
+        try {
+          const res = await api.post('/api/sessions/bulk/delete', { session_ids: ids });
+          const done = res.count || ids.length;
+          state.sessions = state.sessions.filter(s => !ids.includes(s.id));
+          state.selectedIds.clear();
+          updateBulkBar();
+          applyFilters();
+          renderStats();
+          toast(`Deleted ${done} session${done !== 1 ? 's' : ''}`, 'success');
+        } catch (err) {
+          console.error('Bulk delete failed:', err);
+          toast('Failed to delete sessions', 'error');
+        }
+      }
+    );
+  }
+
+  // --- Cleanup ---
+
+  async function showCleanupDialog() {
+    const sessions = state.sessions;
+    const empty = sessions.filter(s => (s.message_count || 0) === 0);
+    const tiny = sessions.filter(s => (s.message_count || 0) > 0 && (s.message_count || 0) <= 5);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const stale = sessions.filter(s => {
+      const d = new Date(s.updated_at || s.created_at || 0);
+      return d < thirtyDaysAgo && !s.starred;
+    });
+
+    dom.cleanupOptions.innerHTML = `
+      <label class="cleanup-option">
+        <input type="checkbox" value="empty" ${empty.length === 0 ? 'disabled' : ''}>
+        <span>Empty sessions (0 messages)</span>
+        <span class="cleanup-count">${empty.length} sessions</span>
+      </label>
+      <label class="cleanup-option">
+        <input type="checkbox" value="tiny" ${tiny.length === 0 ? 'disabled' : ''}>
+        <span>Tiny sessions (1-5 messages)</span>
+        <span class="cleanup-count">${tiny.length} sessions</span>
+      </label>
+      <label class="cleanup-option">
+        <input type="checkbox" value="stale" ${stale.length === 0 ? 'disabled' : ''}>
+        <span>Stale sessions (&gt;30 days, not starred)</span>
+        <span class="cleanup-count">${stale.length} sessions</span>
+      </label>
+    `;
+
+    dom.cleanupDialog.classList.remove('hidden');
+
+    const cleanup = () => {
+      dom.cleanupDialog.classList.add('hidden');
+      dom.cleanupConfirm.onclick = null;
+      dom.cleanupCancel.onclick = null;
+    };
+
+    dom.cleanupCancel.onclick = cleanup;
+    dom.cleanupDialog.querySelector('.modal-backdrop').onclick = cleanup;
+
+    dom.cleanupConfirm.onclick = async () => {
+      const checked = [...dom.cleanupOptions.querySelectorAll('input:checked')].map(i => i.value);
+      cleanup();
+      if (checked.length === 0) return;
+
+      let toDelete = [];
+      if (checked.includes('empty')) toDelete.push(...empty);
+      if (checked.includes('tiny')) toDelete.push(...tiny);
+      if (checked.includes('stale')) toDelete.push(...stale);
+
+      // Deduplicate
+      const idSet = new Set();
+      toDelete = toDelete.filter(s => { if (idSet.has(s.id)) return false; idSet.add(s.id); return true; });
+
+      showConfirmDialog(
+        'Confirm Cleanup',
+        `This will delete ${toDelete.length} session${toDelete.length !== 1 ? 's' : ''}. They will be moved to trash.`,
+        'Clean Up',
+        async () => {
+          let done = 0;
+          for (const s of toDelete) {
+            try {
+              await api.delete(`/api/sessions/${s.id}`);
+              const idx = state.sessions.findIndex(ss => ss.id === s.id);
+              if (idx !== -1) {
+                state.trash.push(state.sessions.splice(idx, 1)[0]);
+                done++;
+              }
+            } catch (err) {
+              console.error('Cleanup delete failed for', s.id, err);
+            }
+          }
+          applyFilters();
+          renderStats();
+          toast(`Cleaned up ${done} session${done !== 1 ? 's' : ''}`, 'success');
+        }
+      );
+    };
+  }
+
+  // --- Trash ---
+
+  async function showTrashDialog() {
+    // Try to load trash from API, fall back to local state
+    try {
+      const data = await api.get('/api/trash');
+      state.trash = data.items || data.sessions || data || state.trash;
+    } catch {
+      // Use local trash state
+    }
+
+    renderTrashList();
+    dom.trashDialog.classList.remove('hidden');
+
+    const closeTrash = () => {
+      dom.trashDialog.classList.add('hidden');
+    };
+
+    dom.trashClose.onclick = closeTrash;
+    dom.trashDialog.querySelector('.modal-backdrop').onclick = closeTrash;
+
+    dom.trashEmpty.onclick = () => {
+      if (state.trash.length === 0) return;
+      showConfirmDialog(
+        'Empty Trash',
+        `Permanently delete ${state.trash.length} session${state.trash.length !== 1 ? 's' : ''}? This cannot be undone.`,
+        'Empty Trash',
+        async () => {
+          try {
+            await api.post('/api/trash/empty');
+            state.trash = [];
+            renderTrashList();
+            toast('Trash emptied', 'success');
+          } catch (err) {
+            console.error('Empty trash failed:', err);
+            toast('Failed to empty trash', 'error');
+          }
+        }
+      );
+    };
+  }
+
+  function renderTrashList() {
+    if (!state.trash || state.trash.length === 0) {
+      dom.trashList.innerHTML = '<div class="trash-empty-state">Trash is empty</div>';
+      return;
+    }
+
+    dom.trashList.innerHTML = '';
+    for (const entry of state.trash) {
+      // Trash items from API have: filename, size, date_moved
+      const filename = entry.filename || entry.name || 'unknown';
+      const displayName = filename.replace(/\.jsonl$/, '').replace(/_/g, ' ');
+      const size = formatBytes(entry.size || 0);
+      const date = entry.date_moved ? formatRelativeTime(entry.date_moved) : '';
+
+      const item = document.createElement('div');
+      item.className = 'trash-item';
+      item.innerHTML = `
+        <div class="trash-item-info">
+          <span class="trash-item-title">${escapeHtml(truncate(displayName, 50))}</span>
+          <span class="trash-item-meta">${size} &middot; ${date}</span>
+        </div>
+        <button class="btn btn-secondary btn-sm">Restore</button>
+      `;
+      item.querySelector('button').addEventListener('click', async () => {
+        try {
+          await api.post(`/api/trash/${encodeURIComponent(filename)}/restore`);
+          const idx = state.trash.findIndex(t => t.filename === filename);
+          if (idx !== -1) state.trash.splice(idx, 1);
+          renderTrashList();
+          toast('Session restored', 'success');
+          // Reindex to pick up the restored file
+          setTimeout(() => api.post('/api/reindex'), 500);
+        } catch (err) {
+          console.error('Restore failed:', err);
+          toast('Failed to restore session', 'error');
+        }
+      });
+      dom.trashList.appendChild(item);
+    }
+  }
+
+  function showListView() {
+    state.currentView = 'list';
+    state.currentSessionId = null;
+    dom.detailView.classList.add('hidden');
+    dom.listView.classList.remove('hidden');
+  }
+
+  // --- Actions ---
+
+  async function resumeSession(sessionId) {
+    try {
+      await api.post(`/api/sessions/${sessionId}/resume`);
+      const session = state.sessions.find(s => s.id === sessionId);
+      const extra = (session && session.is_subagent) ? ' (resuming parent session)' : '';
+      toast('Opening in Terminal — large sessions may take 30-60s to load' + extra, 'success');
+    } catch (err) {
+      console.error('Resume failed:', err);
+      toast('Failed to resume session. Copy the command manually.', 'error');
+    }
+  }
+
+  function copyResumeCommand(sessionId) {
+    // For subagent sessions, copy the parent session ID
+    const session = state.sessions.find(s => s.id === sessionId);
+    const resumeId = (session && session.is_subagent && session.parent_session_id)
+      ? session.parent_session_id
+      : sessionId;
+    const cmd = `claude -r ${resumeId}`;
+    const suffix = (resumeId !== sessionId) ? ' (parent session)' : '';
+    navigator.clipboard.writeText(cmd).then(() => {
+      toast('Copied: ' + cmd + suffix, 'success');
+    }).catch(() => {
+      const input = document.createElement('input');
+      input.value = cmd;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand('copy');
+      document.body.removeChild(input);
+      toast('Copied: ' + cmd + suffix, 'success');
+    });
+  }
+
+  async function reindex() {
+    dom.reindexBtn.disabled = true;
+    dom.reindexBtn.classList.add('spinning');
+    try {
+      await api.post('/api/reindex');
+      toast('Reindex started', 'info');
+      // Reload sessions after a brief pause
+      setTimeout(() => loadSessions(), 1000);
+    } catch (err) {
+      console.error('Reindex failed:', err);
+      toast('Reindex failed', 'error');
+    } finally {
+      dom.reindexBtn.disabled = false;
+      dom.reindexBtn.classList.remove('spinning');
+    }
+  }
+
+  // --- Toast ---
+
+  function toast(message, type = 'info') {
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = message;
+    dom.toastContainer.appendChild(el);
+
+    setTimeout(() => {
+      el.classList.add('fade-out');
+      el.addEventListener('animationend', () => el.remove());
+    }, 3000);
+  }
+
+  // --- SSE (Server-Sent Events) ---
+
+  function connectSSE() {
+    let retryDelay = 1000;
+
+    function connect() {
+      const es = new EventSource('/api/events');
+
+      es.onopen = () => {
+        retryDelay = 1000;
+      };
+
+      es.addEventListener('session_update', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          updateSessionInPlace(data);
+        } catch {}
+      });
+
+      es.addEventListener('new_session', (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          state.sessions.unshift(data);
+          applyFilters();
+          toast('New session detected', 'info');
+        } catch {}
+      });
+
+      es.addEventListener('reindex_complete', () => {
+        refreshSessionsSilently();
+      });
+
+      es.onerror = () => {
+        es.close();
+        setTimeout(connect, retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 30000);
+      };
+    }
+
+    connect();
+  }
+
+  function updateSessionInPlace(updated) {
+    const idx = state.sessions.findIndex(s => s.id === updated.id);
+    if (idx !== -1) {
+      state.sessions[idx] = { ...state.sessions[idx], ...updated };
+    }
+    applyFilters();
+
+    // If we're viewing this session's detail, update header
+    if (state.currentSessionId === updated.id) {
+      showSessionDetail(updated.id);
+    }
+  }
+
+  // --- Data Loading ---
+
+  async function loadSessions() {
+    dom.listLoading.classList.remove('hidden');
+    dom.emptyState.classList.add('hidden');
+    try {
+      const data = await api.get('/api/sessions');
+      state.sessions = data.sessions || data || [];
+      state.stats = data.stats || {
+        total: state.sessions.length,
+        active: state.sessions.filter(s => s.status === 'active').length,
+        tokens: state.sessions.reduce((sum, s) => sum + (s.total_tokens || 0), 0),
+        projects: new Set(state.sessions.map(s => s.project).filter(Boolean)).size,
+      };
+
+      // Extract projects
+      const projMap = new Map();
+      for (const s of state.sessions) {
+        const p = s.project || 'Unknown Project';
+        projMap.set(p, (projMap.get(p) || 0) + 1);
+      }
+      state.projects = [...projMap.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count);
+
+      renderStats();
+      renderProjectFilters();
+      applyFilters();
+    } catch (err) {
+      console.error('Failed to load sessions:', err);
+      dom.emptyState.classList.remove('hidden');
+      dom.emptyText.textContent = 'Failed to load sessions';
+    } finally {
+      dom.listLoading.classList.add('hidden');
+    }
+  }
+
+  // --- Silent Refresh (preserves search/filter state) ---
+
+  async function refreshSessionsSilently() {
+    try {
+      const data = await api.get('/api/sessions');
+      const newSessions = data.sessions || data || [];
+      state.sessions = newSessions;
+      state.stats = data.stats || state.stats;
+
+      // Update stats display
+      renderStats();
+
+      // If user is NOT in a search, re-apply filters to show updated data
+      // If user IS in a search, leave searchResults alone — don't wipe their results
+      if (!state.searchResults) {
+        applyFilters();
+      }
+    } catch (err) {
+      // Silent — don't show error toasts for background refreshes
+      console.warn('Silent refresh failed:', err);
+    }
+  }
+
+  // --- Infinite Scroll ---
+
+  function setupInfiniteScroll() {
+    dom.content.addEventListener('scroll', () => {
+      if (state.currentView !== 'detail') return;
+      if (!state.hasMoreMessages || state.loadingMessages) return;
+
+      const { scrollTop, scrollHeight, clientHeight } = dom.content;
+      if (scrollHeight - scrollTop - clientHeight < 200) {
+        loadMessages(state.currentSessionId, state.currentPage + 1);
+      }
+    });
+  }
+
+  // --- Sidebar Mobile Toggle ---
+
+  let overlay = null;
+
+  function setupSidebarToggle() {
+    overlay = document.createElement('div');
+    overlay.className = 'sidebar-overlay';
+    document.body.appendChild(overlay);
+
+    dom.hamburger.addEventListener('click', () => {
+      const isOpen = dom.sidebar.classList.toggle('open');
+      overlay.classList.toggle('active', isOpen);
+    });
+
+    overlay.addEventListener('click', () => {
+      dom.sidebar.classList.remove('open');
+      overlay.classList.remove('active');
+    });
+  }
+
+  // --- Event Binding ---
+
+  function bindEvents() {
+    // Search
+    dom.searchInput.addEventListener('input', (e) => {
+      state.filters.search = e.target.value;
+      debouncedSearch(e.target.value);
+    });
+    dom.searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        dom.searchInput.value = '';
+        state.filters.search = '';
+        state.searchResults = null;
+        dom.searchClear.classList.add('hidden');
+        renderSessionList();
+      }
+    });
+    dom.searchClear.addEventListener('click', () => {
+      dom.searchInput.value = '';
+      state.filters.search = '';
+      state.searchResults = null;
+      dom.searchClear.classList.add('hidden');
+      renderSessionList();
+    });
+
+    // Status filters
+    dom.statusFilters.addEventListener('change', (e) => {
+      if (e.target.name === 'status') {
+        state.filters.status = e.target.value;
+        applyFilters();
+      }
+    });
+
+    // Sort
+    dom.sortSelect.addEventListener('change', (e) => {
+      state.filters.sort = e.target.value;
+      applyFilters();
+    });
+
+    // Back button
+    dom.backBtn.addEventListener('click', showListView);
+
+    // Reindex
+    dom.reindexBtn.addEventListener('click', reindex);
+
+    // Clear all filters
+    document.addEventListener('clear-all-filters', () => {
+      state.filters.status = 'all';
+      state.filters.projects.clear();
+      state.filters.search = '';
+      state.searchResults = null;
+      dom.searchInput.value = '';
+      dom.searchClear.classList.add('hidden');
+      // Reset radio buttons
+      const allRadio = dom.statusFilters.querySelector('input[value="all"]');
+      if (allRadio) allRadio.checked = true;
+      // Uncheck project checkboxes
+      dom.projectFilters.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+      applyFilters();
+    });
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      // Escape: close context menu, modals, select mode, or go back
+      if (e.key === 'Escape') {
+        if (!dom.contextMenu.classList.contains('hidden')) {
+          hideContextMenu();
+          return;
+        }
+        if (!dom.confirmDialog.classList.contains('hidden')) {
+          dom.confirmDialog.classList.add('hidden');
+          return;
+        }
+        if (!dom.renameDialog.classList.contains('hidden')) {
+          dom.renameDialog.classList.add('hidden');
+          return;
+        }
+        if (!dom.cleanupDialog.classList.contains('hidden')) {
+          dom.cleanupDialog.classList.add('hidden');
+          return;
+        }
+        if (!dom.trashDialog.classList.contains('hidden')) {
+          dom.trashDialog.classList.add('hidden');
+          return;
+        }
+        if (state.selectMode) {
+          toggleSelectMode();
+          return;
+        }
+        if (state.currentView === 'detail') {
+          showListView();
+        }
+      }
+      // Ctrl/Cmd+K to focus search
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        dom.searchInput.focus();
+      }
+    });
+
+    // Context menu: close on click outside
+    document.addEventListener('click', (e) => {
+      if (!dom.contextMenu.classList.contains('hidden') && !dom.contextMenu.contains(e.target)) {
+        hideContextMenu();
+      }
+    });
+
+    // Context menu: close on scroll
+    dom.content.addEventListener('scroll', () => {
+      if (!dom.contextMenu.classList.contains('hidden')) {
+        hideContextMenu();
+      }
+    });
+
+    // Select mode toggle
+    dom.selectModeBtn.addEventListener('click', toggleSelectMode);
+
+    // Bulk actions
+    dom.bulkStarBtn.addEventListener('click', bulkStar);
+    dom.bulkArchiveBtn.addEventListener('click', bulkArchive);
+    dom.bulkDeleteBtn.addEventListener('click', bulkDelete);
+    dom.bulkClearBtn.addEventListener('click', () => {
+      state.selectedIds.clear();
+      updateBulkBar();
+      renderSessionList();
+    });
+
+    // Cleanup and Trash buttons
+    dom.cleanupBtn.addEventListener('click', showCleanupDialog);
+    dom.trashBtn.addEventListener('click', showTrashDialog);
+  }
+
+  // --- Init ---
+
+  function init() {
+    cacheDom();
+    bindEvents();
+    setupSidebarToggle();
+    setupInfiniteScroll();
+    loadSessions();
+    connectSSE();
+  }
+
+  // Boot
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+
+  // Public API for debugging
+  return { state, loadSessions, toast };
+})();
