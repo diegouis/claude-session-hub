@@ -2,7 +2,7 @@
 
 A local web dashboard for browsing, searching, and managing all your Claude Code sessions. Never lose track of a session again.
 
-![Claude Session Hub dashboard](screenshots/01_initial_load.png)
+![Claude Session Hub dashboard](docs/images/dashboard.png)
 
 ## The Problem
 
@@ -28,6 +28,18 @@ Claude Code saves every session to disk, but there's no way to:
 - **Subagent awareness** — subagent sessions show a badge and resume the parent
 - **Dark theme** — matches your terminal aesthetic
 - **100% local** — no cloud, no telemetry, no accounts, reads only from your local disk
+
+### Search & Detail View
+
+| Full-text search | Session detail |
+|---|---|
+| ![Search](docs/images/search.png) | ![Detail](docs/images/session_detail.png) |
+
+### Session Management
+
+| Context menu | Bulk select | Cleanup |
+|---|---|---|
+| ![Context menu](docs/images/context_menu.png) | ![Bulk select](docs/images/bulk_select.png) | ![Cleanup](docs/images/cleanup.png) |
 
 ## Quick Start
 
