@@ -20,6 +20,7 @@ const SessionHub = (() => {
       length: 'all',
       sort: 'date_desc',
       search: '',
+      hideSubagents: true,
     },
     searchResults: null,
     sseRetryDelay: 1000,
@@ -262,7 +263,8 @@ const SessionHub = (() => {
     card.dataset.sessionId = session.id;
 
     const isSelected = state.selectedIds.has(session.id);
-    const displayTitle = session.label || session.custom_label || session.title || 'Untitled session';
+    const untitledFallback = `Session ${(session.id || '').substring(0, 8)} · ${formatRelativeTime(session.created_at)}`;
+    const displayTitle = session.label || session.custom_label || session.title || untitledFallback;
     const subtitle = (session.label || session.custom_label) && session.title ? session.title : null;
     const starHtml = session.starred ? '<span class="star-icon">&#11088;</span>' : '';
     const subagentHtml = session.is_subagent ? '<span class="subagent-badge">subagent</span>' : '';
@@ -346,7 +348,7 @@ const SessionHub = (() => {
 
     if (parts.length === 0) return;
 
-    const count = (state.searchResults || state.filteredSessions).length;
+    const count = state.searchResults ? (state._searchTotal || state.searchResults.length) : state.filteredSessions.length;
     const banner = document.createElement('div');
     banner.id = 'filter-banner';
     banner.className = 'filter-banner';
@@ -446,6 +448,9 @@ const SessionHub = (() => {
     // Helper: apply all filters EXCEPT the one named in `exclude`
     function getFilteredSessions(exclude) {
       let sessions = [...state.sessions];
+      if (state.filters.hideSubagents) {
+        sessions = sessions.filter(s => !s.is_subagent);
+      }
       if (exclude !== 'status' && state.filters.status !== 'all') {
         if (state.filters.status === 'starred') {
           sessions = sessions.filter(s => s.starred);
@@ -490,6 +495,8 @@ const SessionHub = (() => {
     if (countIdle) countIdle.textContent = statusCounts.idle;
     if (countStale) countStale.textContent = statusCounts.stale;
     if (countStarred) countStarred.textContent = statusCounts.starred;
+    const countSubagents = $('#count-subagents');
+    if (countSubagents) countSubagents.textContent = state.sessions.filter(s => s.is_subagent).length;
 
     // Length counts (exclude length filter so we see all buckets)
     const lengthBase = getFilteredSessions('length');
@@ -535,6 +542,11 @@ const SessionHub = (() => {
     }
 
     let sessions = [...state.sessions];
+
+    // Subagent filter
+    if (state.filters.hideSubagents) {
+      sessions = sessions.filter(s => !s.is_subagent);
+    }
 
     // Status filter
     if (state.filters.status !== 'all') {
@@ -682,10 +694,29 @@ const SessionHub = (() => {
       // data.results is an array of { session, snippet }
       const results = (data.results || []).map(r => {
         const s = r.session || r;
-        s._searchSnippet = r.snippet || null;
+        // Clean up long paths in snippets
+        let snippet = r.snippet || null;
+        if (snippet) {
+          // Replace long /Users/.../path sequences (may contain spaces, parens, @)
+          snippet = snippet.replace(/\/Users\/[^\n<]*?(?=\s{2}|<|\n|$)/g, match => {
+            // Only shorten if it looks like a real path (has multiple segments)
+            const parts = match.replace(/\s+$/, '').split('/').filter(Boolean);
+            if (parts.length > 4) {
+              return '.../' + parts.slice(-2).join('/');
+            }
+            return match;
+          });
+        }
+        s._searchSnippet = snippet;
         return s;
       });
       state.searchResults = results;
+      // Show "100+" if capped
+      if (data.total >= 100) {
+        state._searchTotal = '100+';
+      } else {
+        state._searchTotal = String(data.total);
+      }
       renderSessionList();
     } catch (err) {
       console.error('Search failed:', err);
@@ -721,7 +752,8 @@ const SessionHub = (() => {
       }
     }
 
-    const displayTitle = session.custom_label || session.title || 'Untitled session';
+    const detailFallback = `Session ${(sessionId || '').substring(0, 8)} · ${formatRelativeTime(session.created_at)}`;
+    const displayTitle = session.custom_label || session.title || detailFallback;
     dom.detailTitle.textContent = truncate(displayTitle, 200);
     dom.detailTitle.title = displayTitle;
     const color = getProjectColor(session.project);
@@ -1903,6 +1935,15 @@ const SessionHub = (() => {
       }
     });
 
+    // Subagent toggle
+    const hideSubagentsCheckbox = $('#hide-subagents');
+    if (hideSubagentsCheckbox) {
+      hideSubagentsCheckbox.addEventListener('change', (e) => {
+        state.filters.hideSubagents = e.target.checked;
+        applyFilters();
+      });
+    }
+
     // Length filters
     dom.lengthFilters.addEventListener('change', (e) => {
       if (e.target.name === 'length') {
@@ -1939,6 +1980,7 @@ const SessionHub = (() => {
       state.filters.status = 'all';
       state.filters.projects.clear();
       state.filters.length = 'all';
+      state.filters.hideSubagents = true;
       state.filters.search = '';
       state.searchResults = null;
       dom.searchInput.value = '';
