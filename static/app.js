@@ -911,8 +911,9 @@ const SessionHub = (() => {
 
   function updateDetailStarButton(session) {
     if (dom.detailStarBtn) {
-      dom.detailStarBtn.textContent = session.starred ? '\u2B50' : '\u2606';
+      dom.detailStarBtn.textContent = session.starred ? '\u2605' : '\u2606';
       dom.detailStarBtn.title = session.starred ? 'Unstar' : 'Star';
+      dom.detailStarBtn.classList.toggle('starred', !!session.starred);
     }
   }
 
