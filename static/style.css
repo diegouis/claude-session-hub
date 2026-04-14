@@ -699,15 +699,14 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding: 0 0 12px 0;
+  padding: 20px 0 12px 0;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 16px;
+  margin: -20px 0 16px 0;
   flex-wrap: wrap;
   position: sticky;
-  top: 0;
+  top: -20px;
   background: var(--bg-primary);
   z-index: 10;
-  padding-top: 4px;
 }
 .detail-title-area {
   flex: 1;
