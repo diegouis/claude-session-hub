@@ -1,0 +1,7 @@
+__pycache__
+data/
+screenshots/
+.git
+.gitignore
+*.pyc
+test_*.py

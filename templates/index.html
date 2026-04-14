@@ -56,6 +56,9 @@
             </svg>
             <input type="text" id="search-input" placeholder="Search sessions..." autocomplete="off">
             <button class="search-clear hidden" id="search-clear">&times;</button>
+            <div id="search-history" class="search-history hidden">
+              <!-- Populated by JS -->
+            </div>
           </div>
         </div>
 
@@ -92,6 +95,37 @@
           <h3 class="sidebar-heading">Projects</h3>
           <div class="project-filters" id="project-filters">
             <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <div class="sidebar-section">
+          <h3 class="sidebar-heading">Session Length</h3>
+          <div class="filter-group" id="length-filters">
+            <label class="filter-option">
+              <input type="radio" name="length" value="all" checked>
+              <span class="filter-label">All</span>
+              <span class="filter-count" id="count-length-all">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="length" value="tiny">
+              <span class="filter-label">Tiny (1-5)</span>
+              <span class="filter-count" id="count-length-tiny">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="length" value="short">
+              <span class="filter-label">Short (6-50)</span>
+              <span class="filter-count" id="count-length-short">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="length" value="medium">
+              <span class="filter-label">Medium (51-200)</span>
+              <span class="filter-count" id="count-length-medium">--</span>
+            </label>
+            <label class="filter-option">
+              <input type="radio" name="length" value="long">
+              <span class="filter-label">Long (200+)</span>
+              <span class="filter-count" id="count-length-long">--</span>
+            </label>
           </div>
         </div>
 
@@ -176,6 +210,7 @@
                 </svg>
                 Resume Session
               </button>
+              <span id="resume-status" class="resume-status hidden"></span>
               <button class="btn btn-danger" id="detail-delete-btn" title="Delete session">
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
                   <path d="M5 2V1h6v1h4v2H1V2h4zm1 4v8h4V6H6zM2 4h12l-1 12H3L2 4z"/>

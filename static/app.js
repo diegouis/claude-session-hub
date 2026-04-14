@@ -17,6 +17,7 @@ const SessionHub = (() => {
     filters: {
       status: 'all',
       projects: new Set(),
+      length: 'all',
       sort: 'date_desc',
       search: '',
     },
@@ -48,6 +49,8 @@ const SessionHub = (() => {
     dom.searchClear = $('#search-clear');
     dom.statusFilters = $('#status-filters');
     dom.projectFilters = $('#project-filters');
+    dom.lengthFilters = $('#length-filters');
+    dom.searchHistory = $('#search-history');
     dom.sortSelect = $('#sort-select');
     dom.sessionList = $('#session-list');
     dom.emptyState = $('#empty-state');
@@ -100,6 +103,7 @@ const SessionHub = (() => {
     dom.detailArchiveBtn = $('#detail-archive-btn');
     dom.detailDeleteBtn = $('#detail-delete-btn');
     dom.detailExportBtn = $('#detail-export-btn');
+    dom.resumeStatus = $('#resume-status');
   }
 
   // --- API Client ---
@@ -329,6 +333,10 @@ const SessionHub = (() => {
       const names = [...state.filters.projects].join(', ');
       parts.push(`Projects: <strong>${escapeHtml(names)}</strong>`);
     }
+    if (state.filters.length !== 'all') {
+      const lengthLabels = { tiny: 'Tiny', short: 'Short', medium: 'Medium', long: 'Long' };
+      parts.push(`Length: <strong>${lengthLabels[state.filters.length] || state.filters.length}</strong>`);
+    }
     if (state.searchResults) {
       parts.push(`Search: <strong>${escapeHtml(state.filters.search)}</strong>`);
     }
@@ -423,21 +431,89 @@ const SessionHub = (() => {
     dom.statTokens.textContent = formatNumber(state.stats.tokens);
     dom.statProjects.textContent = formatNumber(state.stats.projects);
 
-    // Counts in sidebar
-    const counts = { all: 0, active: 0, idle: 0, stale: 0 };
-    for (const s of state.sessions) {
-      counts.all++;
+    // Helper: classify message count into length bucket
+    function getLengthBucket(mc) {
+      if (mc >= 1 && mc <= 5) return 'tiny';
+      if (mc >= 6 && mc <= 50) return 'short';
+      if (mc >= 51 && mc <= 200) return 'medium';
+      if (mc > 200) return 'long';
+      return null;
+    }
+
+    // Helper: apply all filters EXCEPT the one named in `exclude`
+    function getFilteredSessions(exclude) {
+      let sessions = [...state.sessions];
+      if (exclude !== 'status' && state.filters.status !== 'all') {
+        sessions = sessions.filter(s => s.status === state.filters.status);
+      }
+      if (exclude !== 'projects' && state.filters.projects.size > 0) {
+        sessions = sessions.filter(s => state.filters.projects.has(s.project));
+      }
+      if (exclude !== 'length' && state.filters.length !== 'all') {
+        sessions = sessions.filter(s => {
+          const mc = s.message_count || 0;
+          switch(state.filters.length) {
+            case 'tiny': return mc >= 1 && mc <= 5;
+            case 'short': return mc >= 6 && mc <= 50;
+            case 'medium': return mc >= 51 && mc <= 200;
+            case 'long': return mc > 200;
+            default: return true;
+          }
+        });
+      }
+      return sessions;
+    }
+
+    // Status counts (exclude status filter so we see all statuses)
+    const statusBase = getFilteredSessions('status');
+    const statusCounts = { all: 0, active: 0, idle: 0, stale: 0 };
+    for (const s of statusBase) {
+      statusCounts.all++;
       const st = s.status || 'stale';
-      if (counts[st] !== undefined) counts[st]++;
+      if (statusCounts[st] !== undefined) statusCounts[st]++;
     }
     const countAll = $('#count-all');
     const countActive = $('#count-active');
     const countIdle = $('#count-idle');
     const countStale = $('#count-stale');
-    if (countAll) countAll.textContent = counts.all;
-    if (countActive) countActive.textContent = counts.active;
-    if (countIdle) countIdle.textContent = counts.idle;
-    if (countStale) countStale.textContent = counts.stale;
+    if (countAll) countAll.textContent = statusCounts.all;
+    if (countActive) countActive.textContent = statusCounts.active;
+    if (countIdle) countIdle.textContent = statusCounts.idle;
+    if (countStale) countStale.textContent = statusCounts.stale;
+
+    // Length counts (exclude length filter so we see all buckets)
+    const lengthBase = getFilteredSessions('length');
+    const lengthCounts = { all: 0, tiny: 0, short: 0, medium: 0, long: 0 };
+    for (const s of lengthBase) {
+      lengthCounts.all++;
+      const bucket = getLengthBucket(s.message_count || 0);
+      if (bucket && lengthCounts[bucket] !== undefined) lengthCounts[bucket]++;
+    }
+    const clAll = $('#count-length-all');
+    const clTiny = $('#count-length-tiny');
+    const clShort = $('#count-length-short');
+    const clMedium = $('#count-length-medium');
+    const clLong = $('#count-length-long');
+    if (clAll) clAll.textContent = lengthCounts.all;
+    if (clTiny) clTiny.textContent = lengthCounts.tiny;
+    if (clShort) clShort.textContent = lengthCounts.short;
+    if (clMedium) clMedium.textContent = lengthCounts.medium;
+    if (clLong) clLong.textContent = lengthCounts.long;
+
+    // Project counts (exclude projects filter so we see all projects)
+    const projectBase = getFilteredSessions('projects');
+    const projCountMap = new Map();
+    for (const s of projectBase) {
+      const p = s.project || 'Unknown Project';
+      projCountMap.set(p, (projCountMap.get(p) || 0) + 1);
+    }
+    dom.projectFilters.querySelectorAll('.project-filter').forEach(label => {
+      const input = label.querySelector('input');
+      const countEl = label.querySelector('.project-count');
+      if (input && countEl) {
+        countEl.textContent = projCountMap.get(input.value) || 0;
+      }
+    });
   }
 
   // --- Filtering & Sorting ---
@@ -453,6 +529,20 @@ const SessionHub = (() => {
     // Project filter
     if (state.filters.projects.size > 0) {
       sessions = sessions.filter(s => state.filters.projects.has(s.project));
+    }
+
+    // Length filter
+    if (state.filters.length !== 'all') {
+      sessions = sessions.filter(s => {
+        const mc = s.message_count || 0;
+        switch(state.filters.length) {
+          case 'tiny': return mc >= 1 && mc <= 5;
+          case 'short': return mc >= 6 && mc <= 50;
+          case 'medium': return mc >= 51 && mc <= 200;
+          case 'long': return mc > 200;
+          default: return true;
+        }
+      });
     }
 
     // Sort — starred sessions always first
@@ -490,10 +580,75 @@ const SessionHub = (() => {
 
     state.filteredSessions = sessions;
     state.searchResults = null;
+    renderStats();
     renderSessionList();
   }
 
   // --- Search ---
+
+  // --- Search History ---
+
+  const SEARCH_HISTORY_KEY = 'session-hub-search-history';
+  const SEARCH_HISTORY_MAX = 10;
+
+  function getSearchHistory() {
+    try {
+      return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY)) || [];
+    } catch { return []; }
+  }
+
+  function saveSearchHistory(query) {
+    const trimmed = query.trim();
+    if (!trimmed) return;
+    let history = getSearchHistory();
+    // Dedup: remove existing entry
+    history = history.filter(h => h !== trimmed);
+    // Most recent first
+    history.unshift(trimmed);
+    // Max 10
+    if (history.length > SEARCH_HISTORY_MAX) history = history.slice(0, SEARCH_HISTORY_MAX);
+    localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+  }
+
+  function clearSearchHistory() {
+    localStorage.removeItem(SEARCH_HISTORY_KEY);
+    hideSearchHistory();
+  }
+
+  function showSearchHistory() {
+    const history = getSearchHistory();
+    if (history.length === 0) {
+      hideSearchHistory();
+      return;
+    }
+    dom.searchHistory.innerHTML = '';
+    for (const item of history) {
+      const el = document.createElement('div');
+      el.className = 'search-history-item';
+      el.innerHTML = `<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" opacity="0.4"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5A5.5 5.5 0 1 1 8 2.5a5.5 5.5 0 0 1 0 11zM8.5 4H7v5l4.25 2.55.75-1.23L8.5 8.25V4z"/></svg>${escapeHtml(item)}`;
+      el.addEventListener('mousedown', (e) => {
+        e.preventDefault(); // prevent blur from firing before click
+        dom.searchInput.value = item;
+        state.filters.search = item;
+        hideSearchHistory();
+        performSearch(item);
+      });
+      dom.searchHistory.appendChild(el);
+    }
+    const clearEl = document.createElement('div');
+    clearEl.className = 'search-history-clear';
+    clearEl.textContent = 'Clear history';
+    clearEl.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      clearSearchHistory();
+    });
+    dom.searchHistory.appendChild(clearEl);
+    dom.searchHistory.classList.remove('hidden');
+  }
+
+  function hideSearchHistory() {
+    if (dom.searchHistory) dom.searchHistory.classList.add('hidden');
+  }
 
   async function performSearch(query) {
     if (!query.trim()) {
@@ -512,6 +667,8 @@ const SessionHub = (() => {
         return s;
       });
       state.searchResults = results;
+      // Save to search history on successful search
+      saveSearchHistory(query);
       renderSessionList();
     } catch (err) {
       console.error('Search failed:', err);
@@ -1164,14 +1321,53 @@ const SessionHub = (() => {
   // --- Actions ---
 
   async function resumeSession(sessionId) {
+    // Show inline status on card resume button if present
+    const cardResumeBtn = dom.sessionList.querySelector(`[data-resume="${sessionId}"]`);
+    let cardStatusEl = null;
+    if (cardResumeBtn) {
+      cardStatusEl = document.createElement('span');
+      cardStatusEl.className = 'card-resume-status';
+      cardStatusEl.textContent = 'Opening...';
+      cardResumeBtn.parentNode.appendChild(cardStatusEl);
+    }
+
     try {
       await api.post(`/api/sessions/${sessionId}/resume`);
       const session = state.sessions.find(s => s.id === sessionId);
       const extra = (session && session.is_subagent) ? ' (resuming parent session)' : '';
-      toast('Opening in Terminal — large sessions may take 30-60s to load' + extra, 'success');
+      const msg = 'Opening in Terminal \u2014 large sessions may take 30-60s to load' + extra;
+
+      // Show inline status in detail view
+      if (dom.resumeStatus) {
+        dom.resumeStatus.textContent = msg;
+        dom.resumeStatus.className = 'resume-status success';
+        dom.resumeStatus.classList.remove('hidden');
+        setTimeout(() => dom.resumeStatus.classList.add('hidden'), 5000);
+      }
+
+      // Update card status
+      if (cardStatusEl) {
+        cardStatusEl.textContent = 'Opened!';
+        setTimeout(() => cardStatusEl.remove(), 4000);
+      }
     } catch (err) {
       console.error('Resume failed:', err);
-      toast('Failed to resume session. Copy the command manually.', 'error');
+      const errMsg = 'Failed to open terminal. Copy the command instead.';
+
+      // Show inline status in detail view
+      if (dom.resumeStatus) {
+        dom.resumeStatus.textContent = errMsg;
+        dom.resumeStatus.className = 'resume-status error';
+        dom.resumeStatus.classList.remove('hidden');
+        setTimeout(() => dom.resumeStatus.classList.add('hidden'), 5000);
+      }
+
+      // Update card status
+      if (cardStatusEl) {
+        cardStatusEl.textContent = 'Failed';
+        cardStatusEl.style.color = 'var(--red)';
+        setTimeout(() => cardStatusEl.remove(), 4000);
+      }
     }
   }
 
@@ -1382,16 +1578,29 @@ const SessionHub = (() => {
     // Search
     dom.searchInput.addEventListener('input', (e) => {
       state.filters.search = e.target.value;
+      if (e.target.value.trim()) {
+        hideSearchHistory();
+      }
       debouncedSearch(e.target.value);
     });
     dom.searchInput.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
+        hideSearchHistory();
         dom.searchInput.value = '';
         state.filters.search = '';
         state.searchResults = null;
         dom.searchClear.classList.add('hidden');
         renderSessionList();
       }
+    });
+    dom.searchInput.addEventListener('focus', () => {
+      if (!dom.searchInput.value.trim()) {
+        showSearchHistory();
+      }
+    });
+    dom.searchInput.addEventListener('blur', () => {
+      // Small delay so click events on history items register
+      setTimeout(() => hideSearchHistory(), 200);
     });
     dom.searchClear.addEventListener('click', () => {
       dom.searchInput.value = '';
@@ -1405,6 +1614,14 @@ const SessionHub = (() => {
     dom.statusFilters.addEventListener('change', (e) => {
       if (e.target.name === 'status') {
         state.filters.status = e.target.value;
+        applyFilters();
+      }
+    });
+
+    // Length filters
+    dom.lengthFilters.addEventListener('change', (e) => {
+      if (e.target.name === 'length') {
+        state.filters.length = e.target.value;
         applyFilters();
       }
     });
@@ -1425,13 +1642,17 @@ const SessionHub = (() => {
     document.addEventListener('clear-all-filters', () => {
       state.filters.status = 'all';
       state.filters.projects.clear();
+      state.filters.length = 'all';
       state.filters.search = '';
       state.searchResults = null;
       dom.searchInput.value = '';
       dom.searchClear.classList.add('hidden');
-      // Reset radio buttons
+      // Reset status radio buttons
       const allRadio = dom.statusFilters.querySelector('input[value="all"]');
       if (allRadio) allRadio.checked = true;
+      // Reset length radio buttons
+      const allLengthRadio = dom.lengthFilters.querySelector('input[value="all"]');
+      if (allLengthRadio) allLengthRadio.checked = true;
       // Uncheck project checkboxes
       dom.projectFilters.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
       applyFilters();

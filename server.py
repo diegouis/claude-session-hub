@@ -4,11 +4,13 @@ import asyncio
 import json
 import logging
 import os
+import platform
 import shlex
 import shutil
 import sqlite3
 import subprocess
 import time
+import webbrowser
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -28,7 +30,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
-ARCHIVE_BASE = Path.home() / ".claude" / "archive"
+ARCHIVE_BASE = Path(os.environ.get("CLAUDE_DIR", str(Path.home() / ".claude"))) / "archive"
 TRASH_DIR = BASE_DIR / "data" / "trash"
 
 # ---------------------------------------------------------------------------
@@ -88,6 +90,15 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.time()
+    response = await call_next(request)
+    duration = (time.time() - start) * 1000
+    if not request.url.path.startswith("/static") and request.url.path != "/api/events":
+        logger.info("%s %s → %d (%.0fms)", request.method, request.url.path, response.status_code, duration)
+    return response
 
 # Static files must be mounted AFTER API routes to avoid shadowing them,
 # but FastAPI handles this correctly since we mount on /static prefix.
@@ -207,6 +218,39 @@ def _extract_tool_result(content) -> Optional[str]:
                     if isinstance(rb, dict) and rb.get("type") == "text":
                         results.append(rb.get("text", ""))
     return "\n".join(results) if results else None
+
+
+def _get_resume_command(cwd: str, session_id: str) -> tuple[list[str], str]:
+    """Build a platform-appropriate command to open a terminal with claude -r.
+
+    Returns (command_args, description).
+    """
+    resume_cmd = f"cd {shlex.quote(cwd)} && echo 'Resuming session {session_id}...' && claude -r {session_id}"
+    system = platform.system()
+
+    if system == "Darwin":
+        # macOS — use osascript to open Terminal.app
+        return (
+            ["osascript", "-e", f'tell app "Terminal" to do script "{resume_cmd}"'],
+            "Terminal.app"
+        )
+    elif system == "Linux":
+        # Try common Linux terminal emulators in order
+        for term_cmd in [
+            ["gnome-terminal", "--", "bash", "-c", resume_cmd + "; exec bash"],
+            ["xterm", "-e", f"bash -c '{resume_cmd}; exec bash'"],
+            ["konsole", "-e", "bash", "-c", resume_cmd + "; exec bash"],
+        ]:
+            if shutil.which(term_cmd[0]):
+                return (term_cmd, term_cmd[0])
+        # Fallback: just return the command, user copies it
+        return (None, "no terminal found")
+    elif system == "Windows":
+        # Windows — use start cmd
+        win_cmd = f'start cmd /k "cd /d {cwd} && claude -r {session_id}"'
+        return (["cmd", "/c", win_cmd], "cmd.exe")
+    else:
+        return (None, f"unsupported platform: {system}")
 
 
 # ---------------------------------------------------------------------------
@@ -489,19 +533,34 @@ async def resume_session(session_id: str):
             if parent_row and parent_row["cwd"]:
                 cwd = parent_row["cwd"]
 
-        cmd = f"cd {shlex.quote(cwd)} && echo 'Resuming session {resume_id}... (large sessions may take 30-60s to load)' && claude -r {resume_id}"
+        resume_raw_cmd = f"cd {shlex.quote(cwd)} && claude -r {resume_id}"
+
+        # In Docker, we can't open a terminal — return the command for the user to copy
+        if os.environ.get("DOCKER"):
+            return {"status": "copy", "command": resume_raw_cmd, "message": "Running in Docker — copy this command to your terminal"}
+
+        command_args, description = _get_resume_command(cwd, resume_id)
+
+        if command_args is None:
+            # No terminal available — return command for manual copy
+            return {
+                "status": "copy",
+                "command": resume_raw_cmd,
+                "message": f"Could not open a terminal ({description}). Copy and run this command manually.",
+                "resumed_id": resume_id,
+            }
+
         try:
             subprocess.run(
-                ["osascript", "-e",
-                 f'tell app "Terminal" to do script "{cmd}"'],
+                command_args,
                 capture_output=True, text=True, timeout=10,
             )
-            msg = f"Opened Terminal with session {resume_id}"
+            msg = f"Opened {description} with session {resume_id}"
             if row["is_subagent"]:
                 msg += f" (parent of subagent {session_id})"
             return {"status": "ok", "message": msg, "resumed_id": resume_id}
         except Exception as e:
-            raise HTTPException(500, f"Failed to open Terminal: {e}")
+            raise HTTPException(500, f"Failed to open terminal ({description}): {e}")
     finally:
         conn.close()
 

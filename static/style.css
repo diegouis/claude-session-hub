@@ -1328,3 +1328,59 @@ body {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* --- Search History Dropdown --- */
+.search-history {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+  box-shadow: var(--shadow-md);
+  z-index: 500;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.search-history-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.search-history-item:hover {
+  background: var(--accent-dim);
+  color: var(--text-primary);
+}
+.search-history-clear {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-align: center;
+  border-top: 1px solid var(--border);
+}
+.search-history-clear:hover {
+  color: var(--red);
+}
+
+/* --- Resume Inline Status --- */
+.resume-status {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  margin-left: 8px;
+}
+.resume-status.success { color: var(--green); }
+.resume-status.error { color: var(--red); }
+.card-resume-status {
+  display: block;
+  font-size: 10px;
+  color: var(--green);
+  margin-top: 4px;
+  text-align: center;
+}
