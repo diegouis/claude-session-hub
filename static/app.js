@@ -667,8 +667,6 @@ const SessionHub = (() => {
         return s;
       });
       state.searchResults = results;
-      // Save to search history on successful search
-      saveSearchHistory(query);
       renderSessionList();
     } catch (err) {
       console.error('Search failed:', err);
@@ -1584,6 +1582,13 @@ const SessionHub = (() => {
       debouncedSearch(e.target.value);
     });
     dom.searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        const query = dom.searchInput.value.trim();
+        if (query) {
+          saveSearchHistory(query);
+          hideSearchHistory();
+        }
+      }
       if (e.key === 'Escape') {
         hideSearchHistory();
         dom.searchInput.value = '';
