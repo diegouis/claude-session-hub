@@ -699,10 +699,15 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  padding-bottom: 16px;
+  padding: 0 0 12px 0;
   border-bottom: 1px solid var(--border);
-  margin-bottom: 20px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 10;
+  padding-top: 4px;
 }
 .detail-title-area {
   flex: 1;
@@ -1379,6 +1384,10 @@ body {
   border-radius: var(--radius-sm);
   margin: 0 0 8px 0;
   text-align: center;
+  position: sticky;
+  top: 70px;
+  z-index: 9;
+  background: var(--bg-primary);
 }
 .resume-status.success { color: var(--green); }
 .resume-status.error { color: var(--red); }
