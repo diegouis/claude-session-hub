@@ -712,6 +712,10 @@ body {
   font-size: 18px;
   font-weight: 700;
   margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
 }
 .detail-meta {
   display: flex;
