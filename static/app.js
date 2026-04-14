@@ -103,7 +103,6 @@ const SessionHub = (() => {
     dom.detailArchiveBtn = $('#detail-archive-btn');
     dom.detailDeleteBtn = $('#detail-delete-btn');
     dom.detailExportBtn = $('#detail-export-btn');
-    dom.detailRenameBtn = $('#detail-rename-btn');
     dom.analyticsView = $('#analytics-view');
     dom.analyticsBtn = $('#analytics-btn');
     dom.analyticsPeriod = $('#analytics-period-select');
@@ -745,7 +744,64 @@ const SessionHub = (() => {
     dom.detailDeleteBtn.onclick = () => confirmDeleteSession(sessionId);
     dom.detailExportBtn.onclick = () => exportSession(sessionId);
     dom.detailStarBtn.onclick = () => toggleStar(sessionId);
-    dom.detailRenameBtn.onclick = () => showRenameDialog(sessionId);
+
+    // Inline title editing
+    dom.detailTitle.onclick = () => {
+      if (dom.detailTitle.classList.contains('editing')) return;
+      const fullTitle = session.label || session.custom_label || session.title || '';
+      dom.detailTitle.textContent = fullTitle;
+      dom.detailTitle.contentEditable = true;
+      dom.detailTitle.classList.add('editing');
+      dom.detailTitle.focus();
+
+      // Select all text
+      const range = document.createRange();
+      range.selectNodeContents(dom.detailTitle);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+
+      const save = async () => {
+        dom.detailTitle.contentEditable = false;
+        dom.detailTitle.classList.remove('editing');
+        const newName = dom.detailTitle.textContent.trim();
+        if (!newName || newName === fullTitle) {
+          // Revert
+          dom.detailTitle.textContent = truncate(fullTitle || 'Untitled session', 200);
+          dom.detailTitle.title = fullTitle;
+          return;
+        }
+        try {
+          await api.patch(`/api/sessions/${sessionId}/label`, { label: newName });
+          const idx = state.sessions.findIndex(s => s.id === sessionId);
+          if (idx !== -1) {
+            state.sessions[idx].label = newName;
+            state.sessions[idx].title = newName;
+          }
+          session.label = newName;
+          session.title = newName;
+          dom.detailTitle.textContent = truncate(newName, 200);
+          dom.detailTitle.title = newName;
+          applyFilters();
+          toast('Session renamed', 'success');
+        } catch (err) {
+          console.error('Rename failed:', err);
+          dom.detailTitle.textContent = truncate(fullTitle, 200);
+          toast('Failed to rename', 'error');
+        }
+      };
+
+      dom.detailTitle.onblur = save;
+      dom.detailTitle.onkeydown = (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); dom.detailTitle.blur(); }
+        if (e.key === 'Escape') {
+          dom.detailTitle.textContent = fullTitle;
+          dom.detailTitle.contentEditable = false;
+          dom.detailTitle.classList.remove('editing');
+          dom.detailTitle.onblur = null;
+        }
+      };
+    };
 
     // Load first page of messages
     await loadMessages(sessionId, 0);
