@@ -1384,3 +1384,178 @@ body {
   margin-top: 4px;
   text-align: center;
 }
+
+/* ============================================================
+   Analytics Dashboard
+   ============================================================ */
+
+.analytics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+.analytics-header h2 {
+  font-size: 20px;
+  color: var(--text-primary);
+  margin: 0;
+}
+.analytics-period select {
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.analytics-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.summary-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  text-align: center;
+}
+.summary-card-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.summary-card-label {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+.analytics-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 20px;
+}
+.analytics-card h3 {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin: 0 0 16px 0;
+  font-weight: 500;
+}
+.analytics-card-wide {
+  grid-column: span 2;
+}
+.chart-container {
+  min-height: 200px;
+  position: relative;
+}
+
+.chart-svg { width: 100%; height: auto; }
+.chart-bar { fill: var(--accent); opacity: 0.8; transition: opacity 0.15s; }
+.chart-bar:hover { opacity: 1; }
+.chart-bar-secondary { fill: var(--green); opacity: 0.6; }
+.chart-bar-secondary:hover { opacity: 0.9; }
+.chart-label { font-size: 10px; fill: var(--text-dim); font-family: var(--font-mono); }
+.chart-grid { stroke: var(--border-light); stroke-width: 0.5; }
+.chart-donut { display: block; margin: 0 auto; }
+.chart-donut path { transition: opacity 0.15s; cursor: pointer; }
+.chart-donut path:hover { opacity: 0.8; }
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 12px;
+  justify-content: center;
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.legend-label { color: var(--text-secondary); }
+.legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.hbar-chart { display: flex; flex-direction: column; gap: 8px; }
+.hbar-row { display: flex; align-items: center; gap: 8px; }
+.hbar-label {
+  width: 130px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.hbar-bar-container {
+  flex: 1;
+  height: 22px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.hbar-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.hbar-value {
+  width: 70px;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.cost-total {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+  text-align: center;
+  margin: 12px 0 4px;
+}
+.cost-note {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-align: center;
+  margin-bottom: 16px;
+  font-style: italic;
+}
+.cost-breakdown { display: flex; flex-direction: column; gap: 4px; }
+.cost-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.cost-model { color: var(--text-secondary); }
+.cost-amount { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+
+#analytics-btn.active {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+@media (max-width: 900px) {
+  .analytics-grid { grid-template-columns: 1fr; }
+  .analytics-card-wide { grid-column: span 1; }
+  .analytics-summary { grid-template-columns: repeat(2, 1fr); }
+}

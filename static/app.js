@@ -103,6 +103,9 @@ const SessionHub = (() => {
     dom.detailArchiveBtn = $('#detail-archive-btn');
     dom.detailDeleteBtn = $('#detail-delete-btn');
     dom.detailExportBtn = $('#detail-export-btn');
+    dom.analyticsView = $('#analytics-view');
+    dom.analyticsBtn = $('#analytics-btn');
+    dom.analyticsPeriod = $('#analytics-period-select');
     dom.resumeStatus = $('#resume-status');
   }
 
@@ -685,6 +688,8 @@ const SessionHub = (() => {
     state.hasMoreMessages = true;
 
     dom.listView.classList.add('hidden');
+    dom.analyticsView.classList.add('hidden');
+    dom.analyticsBtn.classList.remove('active');
     dom.detailView.classList.remove('hidden');
     dom.conversation.innerHTML = '';
 
@@ -1313,7 +1318,193 @@ const SessionHub = (() => {
     state.currentView = 'list';
     state.currentSessionId = null;
     dom.detailView.classList.add('hidden');
+    dom.analyticsView.classList.add('hidden');
+    dom.analyticsBtn.classList.remove('active');
     dom.listView.classList.remove('hidden');
+  }
+
+  // --- Analytics ---
+
+  function showAnalyticsView() {
+    state.currentView = 'analytics';
+    dom.listView.classList.add('hidden');
+    dom.detailView.classList.add('hidden');
+    dom.analyticsView.classList.remove('hidden');
+    dom.analyticsBtn.classList.add('active');
+    loadAnalytics();
+  }
+
+  async function loadAnalytics() {
+    const days = dom.analyticsPeriod ? dom.analyticsPeriod.value : 30;
+    try {
+      const data = await api.get(`/api/analytics?days=${days}`);
+      renderAnalyticsSummary(data.summary, data.cost_estimate);
+      renderDailyActivityChart(data.daily_activity);
+      renderModelDistribution(data.model_distribution);
+      renderSessionLengthChart(data.session_length_distribution);
+      renderProjectBreakdown(data.project_breakdown);
+      renderHourlyActivity(data.hourly_activity);
+      renderCostEstimate(data.cost_estimate);
+    } catch (err) {
+      console.error('Analytics load failed:', err);
+      toast('Failed to load analytics', 'error');
+    }
+  }
+
+  function renderAnalyticsSummary(s, cost) {
+    const el = document.getElementById('analytics-summary');
+    if (!el) return;
+    const cards = [
+      { value: formatNumber(s.total_sessions), label: 'Total Sessions' },
+      { value: formatNumber(s.total_messages), label: 'Total Messages' },
+      { value: formatNumber(s.total_tokens), label: 'Total Tokens' },
+      { value: Math.round(s.avg_messages_per_session || 0), label: 'Avg Msgs/Session' },
+      { value: s.active_sessions || 0, label: 'Active Now' },
+      { value: `$${(cost && cost.total_usd ? cost.total_usd.toFixed(2) : '0.00')}`, label: 'Est. Cost' },
+    ];
+    el.innerHTML = cards.map(c => `
+      <div class="summary-card">
+        <div class="summary-card-value">${c.value}</div>
+        <div class="summary-card-label">${c.label}</div>
+      </div>
+    `).join('');
+  }
+
+  function renderDailyActivityChart(data) {
+    const container = document.getElementById('chart-daily-activity');
+    if (!container || !data || data.length === 0) return;
+    const W = 800, H = 200, P = { t: 10, r: 10, b: 30, l: 50 };
+    const cW = W - P.l - P.r, cH = H - P.t - P.b;
+    const maxM = Math.max(...data.map(d => d.messages), 1);
+    const bW = Math.max(cW / data.length - 2, 3);
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg">`;
+    for (let i = 0; i <= 4; i++) {
+      const y = P.t + cH - (i / 4) * cH;
+      svg += `<text x="${P.l - 5}" y="${y + 3}" text-anchor="end" class="chart-label">${formatNumber(Math.round(maxM * i / 4))}</text>`;
+      svg += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" class="chart-grid"/>`;
+    }
+    data.forEach((d, i) => {
+      const x = P.l + (i * cW / data.length) + 1;
+      const bH = (d.messages / maxM) * cH;
+      const y = P.t + cH - bH;
+      svg += `<rect x="${x}" y="${y}" width="${bW}" height="${bH}" class="chart-bar"><title>${d.date}: ${d.messages} msgs, ${d.sessions} sessions</title></rect>`;
+      if (i % Math.ceil(data.length / 8) === 0) {
+        svg += `<text x="${x + bW / 2}" y="${H - 5}" text-anchor="middle" class="chart-label">${d.date.slice(5)}</text>`;
+      }
+    });
+    svg += '</svg>';
+    container.innerHTML = svg;
+  }
+
+  function renderModelDistribution(models) {
+    const container = document.getElementById('chart-model-distribution');
+    if (!container || !models || models.length === 0) return;
+    const S = 160, cx = S / 2, cy = S / 2, R = 65, IR = 38;
+    const colors = ['#4fc3f7', '#66bb6a', '#ab47bc', '#ffa726', '#ef5350', '#78909c'];
+    let svg = `<svg viewBox="0 0 ${S} ${S}" class="chart-svg chart-donut">`;
+    let startA = 0;
+    models.forEach((m, i) => {
+      const a = (m.percentage / 100) * 360;
+      if (a < 0.5) return;
+      const endA = startA + a;
+      const sR = (startA - 90) * Math.PI / 180, eR = (endA - 90) * Math.PI / 180;
+      const la = a > 180 ? 1 : 0;
+      svg += `<path d="M${cx + R * Math.cos(sR)},${cy + R * Math.sin(sR)} A${R},${R} 0 ${la},1 ${cx + R * Math.cos(eR)},${cy + R * Math.sin(eR)} L${cx + IR * Math.cos(eR)},${cy + IR * Math.sin(eR)} A${IR},${IR} 0 ${la},0 ${cx + IR * Math.cos(sR)},${cy + IR * Math.sin(sR)} Z" fill="${colors[i % colors.length]}"><title>${m.model}: ${formatNumber(m.tokens)} tokens (${m.percentage.toFixed(1)}%)</title></path>`;
+      startA = endA;
+    });
+    svg += '</svg>';
+    let legend = '<div class="chart-legend">';
+    models.forEach((m, i) => {
+      const name = m.model.replace('claude-', '').replace(/-\d{8,}$/, '');
+      legend += `<div class="legend-item"><span class="legend-dot" style="background:${colors[i % colors.length]}"></span><span class="legend-label">${escapeHtml(name)}</span><span class="legend-value">${m.percentage.toFixed(1)}%</span></div>`;
+    });
+    legend += '</div>';
+    container.innerHTML = svg + legend;
+  }
+
+  function renderSessionLengthChart(dist) {
+    const container = document.getElementById('chart-session-length');
+    if (!container || !dist) return;
+    const items = [
+      { label: dist.tiny.label, count: dist.tiny.count, color: '#78909c' },
+      { label: dist.short.label, count: dist.short.count, color: '#42a5f5' },
+      { label: dist.medium.label, count: dist.medium.count, color: '#66bb6a' },
+      { label: dist.long.label, count: dist.long.count, color: '#ffa726' },
+    ];
+    const max = Math.max(...items.map(i => i.count), 1);
+    let html = '<div class="hbar-chart">';
+    items.forEach(item => {
+      const pct = (item.count / max) * 100;
+      html += `<div class="hbar-row">
+        <span class="hbar-label">${item.label}</span>
+        <div class="hbar-bar-container"><div class="hbar-bar" style="width:${pct}%;background:${item.color}"></div></div>
+        <span class="hbar-value">${item.count}</span>
+      </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function renderProjectBreakdown(projects) {
+    const container = document.getElementById('chart-project-breakdown');
+    if (!container || !projects || projects.length === 0) return;
+    const max = Math.max(...projects.map(p => p.tokens), 1);
+    const colors = ['#4fc3f7', '#ab47bc', '#66bb6a', '#ffa726', '#ef5350', '#26c6da', '#ec407a', '#8d6e63', '#78909c', '#d4e157'];
+    let html = '<div class="hbar-chart">';
+    projects.forEach((p, i) => {
+      const pct = (p.tokens / max) * 100;
+      html += `<div class="hbar-row">
+        <span class="hbar-label" title="${escapeHtml(p.project_path || '')}">${escapeHtml(p.project)}</span>
+        <div class="hbar-bar-container"><div class="hbar-bar" style="width:${pct}%;background:${colors[i % colors.length]}"></div></div>
+        <span class="hbar-value">${formatNumber(p.tokens)}</span>
+      </div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
+  }
+
+  function renderHourlyActivity(data) {
+    const container = document.getElementById('chart-hourly-activity');
+    if (!container || !data || data.length === 0) return;
+    const W = 300, H = 160, P = { t: 10, r: 10, b: 25, l: 35 };
+    const cW = W - P.l - P.r, cH = H - P.t - P.b;
+    const maxS = Math.max(...data.map(d => d.sessions), 1);
+    const bW = cW / 24 - 1;
+    const peakHour = data.reduce((p, c) => c.sessions > p.sessions ? c : p, data[0]).hour;
+
+    let svg = `<svg viewBox="0 0 ${W} ${H}" class="chart-svg">`;
+    for (let i = 0; i <= 3; i++) {
+      const y = P.t + cH - (i / 3) * cH;
+      svg += `<text x="${P.l - 4}" y="${y + 3}" text-anchor="end" class="chart-label">${Math.round(maxS * i / 3)}</text>`;
+      svg += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" class="chart-grid"/>`;
+    }
+    data.forEach(d => {
+      const x = P.l + (d.hour * (cW / 24)) + 0.5;
+      const bH = (d.sessions / maxS) * cH;
+      const y = P.t + cH - bH;
+      const cls = d.hour === peakHour ? 'chart-bar-secondary' : 'chart-bar';
+      svg += `<rect x="${x}" y="${y}" width="${bW}" height="${bH}" class="${cls}"><title>${d.hour}:00 — ${d.sessions} sessions</title></rect>`;
+      if (d.hour % 4 === 0) {
+        svg += `<text x="${x + bW / 2}" y="${H - 5}" text-anchor="middle" class="chart-label">${d.hour}h</text>`;
+      }
+    });
+    svg += '</svg>';
+    container.innerHTML = svg;
+  }
+
+  function renderCostEstimate(cost) {
+    const container = document.getElementById('chart-cost-estimate');
+    if (!container || !cost) return;
+    let html = `<div class="cost-total">$${cost.total_usd.toFixed(2)}</div>`;
+    html += `<div class="cost-note">${escapeHtml(cost.note || 'Estimated based on API pricing')}</div>`;
+    html += '<div class="cost-breakdown">';
+    (cost.by_model || []).forEach(m => {
+      const name = m.model.replace('claude-', '').replace(/-\d{8,}$/, '');
+      html += `<div class="cost-row"><span class="cost-model">${escapeHtml(name)}</span><span class="cost-amount">$${m.cost_usd.toFixed(2)}</span></div>`;
+    });
+    html += '</div>';
+    container.innerHTML = html;
   }
 
   // --- Actions ---
@@ -1642,6 +1833,17 @@ const SessionHub = (() => {
 
     // Reindex
     dom.reindexBtn.addEventListener('click', reindex);
+
+    // Analytics
+    dom.analyticsBtn.addEventListener('click', () => {
+      if (state.currentView === 'analytics') showListView();
+      else showAnalyticsView();
+    });
+    if (dom.analyticsPeriod) {
+      dom.analyticsPeriod.addEventListener('change', () => {
+        if (state.currentView === 'analytics') loadAnalytics();
+      });
+    }
 
     // Clear all filters
     document.addEventListener('clear-all-filters', () => {

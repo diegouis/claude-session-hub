@@ -12,7 +12,7 @@ import subprocess
 import time
 import webbrowser
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
@@ -961,6 +961,207 @@ async def get_stats():
         stats["active_count"] = len(active)
         stats["active_session_ids"] = list(active)
         return stats
+    finally:
+        conn.close()
+
+
+
+# ---------------------------------------------------------------------------
+# Cost estimation rates per 1M tokens
+# ---------------------------------------------------------------------------
+_COST_RATES = {
+    "opus":   {"input": 15.0,  "output": 75.0},
+    "sonnet": {"input": 3.0,   "output": 15.0},
+    "haiku":  {"input": 0.25,  "output": 1.25},
+}
+
+
+def _model_tier(model_name: str) -> str:
+    """Determine pricing tier from a model name string."""
+    if not model_name:
+        return "sonnet"  # default fallback
+    lower = model_name.lower()
+    for tier in ("opus", "haiku", "sonnet"):
+        if tier in lower:
+            return tier
+    return "sonnet"
+
+
+@app.get("/api/analytics")
+async def get_analytics(days: int = Query(default=30, ge=1, le=365)):
+    conn = _get_conn()
+    try:
+        today = date.today()
+        start_date = today - timedelta(days=days)
+        period = {
+            "start": start_date.isoformat(),
+            "end": today.isoformat(),
+            "days": days,
+        }
+
+        # --- Summary (all sessions, no time filter) ---
+        sum_row = conn.execute("""
+            SELECT
+                COUNT(*) as total_sessions,
+                COALESCE(SUM(message_count), 0) as total_messages,
+                COALESCE(SUM(total_input_tokens), 0) as total_input_tokens,
+                COALESCE(SUM(total_output_tokens), 0) as total_output_tokens,
+                COALESCE(SUM(file_size_bytes), 0) as total_size_bytes,
+                COALESCE(SUM(starred), 0) as starred_sessions,
+                COUNT(DISTINCT project_path) as projects_count
+            FROM sessions
+        """).fetchone()
+        s = dict(sum_row)
+        total_sessions = s["total_sessions"] or 0
+        s["total_tokens"] = s["total_input_tokens"] + s["total_output_tokens"]
+        s["avg_messages_per_session"] = round(s["total_messages"] / total_sessions, 1) if total_sessions else 0
+        s["avg_tokens_per_session"] = round(s["total_tokens"] / total_sessions) if total_sessions else 0
+        active = get_active_sessions()
+        s["active_sessions"] = len(active)
+        summary = s
+
+        # --- Daily activity (within period, every day filled) ---
+        daily_rows = conn.execute("""
+            SELECT
+                date(started_at) as day,
+                COUNT(*) as sessions,
+                COALESCE(SUM(message_count), 0) as messages,
+                COALESCE(SUM(total_input_tokens), 0) as input_tokens,
+                COALESCE(SUM(total_output_tokens), 0) as output_tokens
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+            GROUP BY date(started_at)
+            ORDER BY day DESC
+        """, (f"-{days} days",)).fetchall()
+        daily_map = {dict(r)["day"]: dict(r) for r in daily_rows}
+
+        daily_activity = []
+        for i in range(days + 1):
+            d = (today - timedelta(days=i)).isoformat()
+            if d in daily_map:
+                entry = daily_map[d]
+                entry["date"] = entry.pop("day")
+                daily_activity.append(entry)
+            else:
+                daily_activity.append({
+                    "date": d, "sessions": 0, "messages": 0,
+                    "input_tokens": 0, "output_tokens": 0,
+                })
+
+        # --- Model distribution (within period) ---
+        model_rows = conn.execute("""
+            SELECT
+                model,
+                COUNT(*) as sessions,
+                COALESCE(SUM(total_input_tokens), 0) + COALESCE(SUM(total_output_tokens), 0) as tokens
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+              AND model IS NOT NULL AND model != ''
+            GROUP BY model
+            ORDER BY tokens DESC
+        """, (f"-{days} days",)).fetchall()
+        total_model_tokens = sum(dict(r)["tokens"] for r in model_rows) or 1
+        model_distribution = []
+        for r in model_rows:
+            d = dict(r)
+            d["percentage"] = round(d["tokens"] / total_model_tokens * 100, 1)
+            model_distribution.append(d)
+
+        # --- Project breakdown (within period, top 10 by tokens) ---
+        project_rows = conn.execute("""
+            SELECT
+                project_path,
+                COUNT(*) as sessions,
+                COALESCE(SUM(total_input_tokens), 0) + COALESCE(SUM(total_output_tokens), 0) as tokens,
+                COALESCE(SUM(message_count), 0) as messages
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+            GROUP BY project_path
+            ORDER BY tokens DESC
+            LIMIT 10
+        """, (f"-{days} days",)).fetchall()
+        project_breakdown = []
+        for r in project_rows:
+            d = dict(r)
+            d["project"] = _project_short_name(d["project_path"])
+            project_breakdown.append(d)
+
+        # --- Session length distribution (within period) ---
+        len_rows = conn.execute("""
+            SELECT
+                SUM(CASE WHEN message_count BETWEEN 1 AND 5 THEN 1 ELSE 0 END) as tiny,
+                SUM(CASE WHEN message_count BETWEEN 6 AND 50 THEN 1 ELSE 0 END) as short,
+                SUM(CASE WHEN message_count BETWEEN 51 AND 200 THEN 1 ELSE 0 END) as medium,
+                SUM(CASE WHEN message_count > 200 THEN 1 ELSE 0 END) as long
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+        """, (f"-{days} days",)).fetchone()
+        ld = dict(len_rows)
+        session_length_distribution = {
+            "tiny":   {"label": "1-5 msgs",   "count": ld["tiny"] or 0},
+            "short":  {"label": "6-50 msgs",  "count": ld["short"] or 0},
+            "medium": {"label": "51-200 msgs", "count": ld["medium"] or 0},
+            "long":   {"label": "200+ msgs",  "count": ld["long"] or 0},
+        }
+
+        # --- Hourly activity (within period) ---
+        hour_rows = conn.execute("""
+            SELECT
+                CAST(strftime('%H', started_at) AS INTEGER) as hour,
+                COUNT(*) as sessions
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+              AND started_at IS NOT NULL
+            GROUP BY hour
+            ORDER BY hour
+        """, (f"-{days} days",)).fetchall()
+        hour_map = {dict(r)["hour"]: dict(r)["sessions"] for r in hour_rows}
+        hourly_activity = [{"hour": h, "sessions": hour_map.get(h, 0)} for h in range(24)]
+
+        # --- Cost estimate (within period) ---
+        cost_rows = conn.execute("""
+            SELECT
+                model,
+                COALESCE(SUM(total_input_tokens), 0) as input_tokens,
+                COALESCE(SUM(total_output_tokens), 0) as output_tokens
+            FROM sessions
+            WHERE started_at >= date('now', ?)
+              AND model IS NOT NULL AND model != ''
+            GROUP BY model
+            ORDER BY output_tokens DESC
+        """, (f"-{days} days",)).fetchall()
+        by_model = []
+        total_cost = 0.0
+        for r in cost_rows:
+            d = dict(r)
+            tier = _model_tier(d["model"])
+            rates = _COST_RATES[tier]
+            cost = (d["input_tokens"] / 1_000_000 * rates["input"]
+                    + d["output_tokens"] / 1_000_000 * rates["output"])
+            cost = round(cost, 2)
+            total_cost += cost
+            by_model.append({
+                "model": d["model"],
+                "input_tokens": d["input_tokens"],
+                "output_tokens": d["output_tokens"],
+                "cost_usd": cost,
+            })
+        cost_estimate = {
+            "total_usd": round(total_cost, 2),
+            "by_model": by_model,
+            "note": "Estimated based on published API pricing. Actual costs may differ.",
+        }
+
+        return {
+            "period": period,
+            "summary": summary,
+            "daily_activity": daily_activity,
+            "model_distribution": model_distribution,
+            "project_breakdown": project_breakdown,
+            "session_length_distribution": session_length_distribution,
+            "hourly_activity": hourly_activity,
+            "cost_estimate": cost_estimate,
+        }
     finally:
         conn.close()
 
