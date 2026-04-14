@@ -10,7 +10,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_DIR = Path.home() / ".claude"
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_DIR", str(Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 ACTIVE_SESSIONS_LOG = CLAUDE_DIR / "active-sessions.log"
 STALE_DAYS = 30

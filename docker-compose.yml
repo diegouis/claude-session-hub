@@ -1,0 +1,17 @@
+version: '3.8'
+services:
+  session-hub:
+    build: .
+    ports:
+      - "7777:7777"
+    volumes:
+      - ~/.claude:/root/.claude:ro
+      - session-data:/app/data
+    environment:
+      - LOG_LEVEL=INFO
+      - CLAUDE_DIR=/root/.claude
+      - DOCKER=1
+    restart: unless-stopped
+
+volumes:
+  session-data:

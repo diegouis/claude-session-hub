@@ -11,7 +11,7 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-CLAUDE_DIR = Path.home() / ".claude"
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_DIR", str(Path.home() / ".claude")))
 PROJECTS_DIR = CLAUDE_DIR / "projects"
 ARCHIVE_DIR = CLAUDE_DIR / "archive"
 DB_PATH = Path(__file__).parent / "data" / "sessions.db"
@@ -404,6 +404,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
 
 def reindex_all(db_path: Optional[Path] = None) -> int:
     """Drop and rebuild the entire index. Returns count of indexed sessions."""
+    start = time.time()
     conn = get_db(db_path)
     conn.execute("DELETE FROM sessions")
     conn.execute("DELETE FROM session_fts")
@@ -424,12 +425,14 @@ def reindex_all(db_path: Optional[Path] = None) -> int:
 
     conn.commit()
     conn.close()
-    logger.info("Full reindex complete: %d sessions", count)
+    elapsed = time.time() - start
+    logger.info("Full reindex complete: %d sessions in %.1fs", count, elapsed)
     return count
 
 
 def reindex_incremental(db_path: Optional[Path] = None) -> int:
     """Only re-index files whose mtime has changed. Returns count of updated sessions."""
+    start = time.time()
     conn = get_db(db_path)
 
     # Build lookup of existing mtimes
@@ -472,7 +475,8 @@ def reindex_incremental(db_path: Optional[Path] = None) -> int:
 
     conn.commit()
     conn.close()
-    logger.info("Incremental reindex: %d changes", count)
+    elapsed = time.time() - start
+    logger.info("Incremental reindex: %d changes in %.1fs", count, elapsed)
     return count
 
 
