@@ -1467,7 +1467,25 @@ body {
 .chart-bar-secondary:hover { opacity: 0.9; }
 .chart-label { font-size: 10px; fill: var(--text-dim); font-family: var(--font-mono); }
 .chart-grid { stroke: var(--border-light); stroke-width: 0.5; }
-.chart-donut { display: block; margin: 0 auto; }
+.chart-donut { display: block; }
+.model-dist-layout {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.model-dist-layout .chart-donut {
+  width: 140px;
+  min-width: 140px;
+  max-width: 140px;
+  height: 140px;
+}
+.chart-legend-vertical {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
 .chart-donut path { transition: opacity 0.15s; cursor: pointer; }
 .chart-donut path:hover { opacity: 0.8; }
 

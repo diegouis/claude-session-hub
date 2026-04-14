@@ -1416,9 +1416,11 @@ const SessionHub = (() => {
   function renderModelDistribution(models) {
     const container = document.getElementById('chart-model-distribution');
     if (!container || !models || models.length === 0) return;
-    const S = 160, cx = S / 2, cy = S / 2, R = 65, IR = 38;
     const colors = ['#4fc3f7', '#66bb6a', '#ab47bc', '#ffa726', '#ef5350', '#78909c'];
-    let svg = `<svg viewBox="0 0 ${S} ${S}" class="chart-svg chart-donut">`;
+
+    // Use a table-style layout: donut on left, legend on right
+    const S = 130, cx = S / 2, cy = S / 2, R = 52, IR = 30;
+    let svg = `<svg viewBox="0 0 ${S} ${S}" width="${S}" height="${S}">`;
     let startA = 0;
     models.forEach((m, i) => {
       const a = (m.percentage / 100) * 360;
@@ -1426,17 +1428,27 @@ const SessionHub = (() => {
       const endA = startA + a;
       const sR = (startA - 90) * Math.PI / 180, eR = (endA - 90) * Math.PI / 180;
       const la = a > 180 ? 1 : 0;
-      svg += `<path d="M${cx + R * Math.cos(sR)},${cy + R * Math.sin(sR)} A${R},${R} 0 ${la},1 ${cx + R * Math.cos(eR)},${cy + R * Math.sin(eR)} L${cx + IR * Math.cos(eR)},${cy + IR * Math.sin(eR)} A${IR},${IR} 0 ${la},0 ${cx + IR * Math.cos(sR)},${cy + IR * Math.sin(sR)} Z" fill="${colors[i % colors.length]}"><title>${m.model}: ${formatNumber(m.tokens)} tokens (${m.percentage.toFixed(1)}%)</title></path>`;
+      svg += `<path d="M${cx + R * Math.cos(sR)},${cy + R * Math.sin(sR)} A${R},${R} 0 ${la},1 ${cx + R * Math.cos(eR)},${cy + R * Math.sin(eR)} L${cx + IR * Math.cos(eR)},${cy + IR * Math.sin(eR)} A${IR},${IR} 0 ${la},0 ${cx + IR * Math.cos(sR)},${cy + IR * Math.sin(sR)} Z" fill="${colors[i % colors.length]}"><title>${escapeHtml(m.model)}: ${formatNumber(m.tokens)} tokens (${m.percentage.toFixed(1)}%)</title></path>`;
       startA = endA;
     });
     svg += '</svg>';
-    let legend = '<div class="chart-legend">';
+
+    let legendRows = '';
     models.forEach((m, i) => {
       const name = m.model.replace(/^claude-/, '').replace(/-\d{8,}.*$/, '').replace(/-(\d+-\d+)$/, ' $1');
-      legend += `<div class="legend-item"><span class="legend-dot" style="background:${colors[i % colors.length]}"></span><span class="legend-label">${escapeHtml(name)}</span><span class="legend-value">${m.percentage.toFixed(1)}%</span></div>`;
+      const tokens = formatNumber(m.tokens);
+      legendRows += `<tr>
+        <td><span class="legend-dot" style="background:${colors[i % colors.length]};display:inline-block"></span></td>
+        <td style="color:var(--text-secondary);font-size:13px;padding:4px 8px">${escapeHtml(name)}</td>
+        <td style="color:var(--text-dim);font-size:12px;text-align:right;white-space:nowrap">${m.percentage.toFixed(1)}%</td>
+        <td style="color:var(--text-dim);font-size:12px;text-align:right;padding-left:8px;white-space:nowrap">${tokens}</td>
+      </tr>`;
     });
-    legend += '</div>';
-    container.innerHTML = svg + legend;
+
+    container.innerHTML = `<div style="display:flex;align-items:center;gap:20px">
+      <div style="flex-shrink:0">${svg}</div>
+      <table style="border-collapse:collapse">${legendRows}</table>
+    </div>`;
   }
 
   function renderSessionLengthChart(dist) {
