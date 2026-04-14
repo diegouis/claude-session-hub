@@ -37,6 +37,14 @@
         <button class="btn btn-secondary btn-select-mode" id="select-mode-btn" title="Toggle selection mode">
           Select
         </button>
+        <button class="btn btn-secondary" id="analytics-btn" title="View analytics">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <rect x="1" y="8" width="3" height="7" rx="0.5"/>
+            <rect x="5.5" y="5" width="3" height="10" rx="0.5"/>
+            <rect x="10" y="1" width="3" height="14" rx="0.5"/>
+          </svg>
+          Analytics
+        </button>
         <button class="btn btn-secondary" id="reindex-btn" title="Re-index sessions">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <path d="M8 1a7 7 0 0 0-7 7h2a5 5 0 0 1 9.17-2.74L10 7h5V2l-1.96 1.96A7 7 0 0 0 8 1zM3 8a5 5 0 0 0 5 5 5 5 0 0 0 4.17-2.26L14 9H9v5l1.96-1.96A7 7 0 0 1 1 8h2z"/>
@@ -225,6 +233,48 @@
           <div class="loading-spinner hidden" id="messages-loading">
             <div class="spinner"></div>
             <span>Loading messages...</span>
+          </div>
+        </div>
+
+        <!-- Analytics view -->
+        <div id="analytics-view" class="hidden">
+          <div class="analytics-header">
+            <h2>Analytics Dashboard</h2>
+            <div class="analytics-period">
+              <select id="analytics-period-select">
+                <option value="7">Last 7 days</option>
+                <option value="30" selected>Last 30 days</option>
+                <option value="90">Last 90 days</option>
+                <option value="365">Last year</option>
+              </select>
+            </div>
+          </div>
+          <div class="analytics-summary" id="analytics-summary"></div>
+          <div class="analytics-grid">
+            <div class="analytics-card analytics-card-wide">
+              <h3>Daily Activity</h3>
+              <div id="chart-daily-activity" class="chart-container"></div>
+            </div>
+            <div class="analytics-card">
+              <h3>Model Distribution</h3>
+              <div id="chart-model-distribution" class="chart-container"></div>
+            </div>
+            <div class="analytics-card">
+              <h3>Session Length Distribution</h3>
+              <div id="chart-session-length" class="chart-container"></div>
+            </div>
+            <div class="analytics-card analytics-card-wide">
+              <h3>Project Breakdown</h3>
+              <div id="chart-project-breakdown" class="chart-container"></div>
+            </div>
+            <div class="analytics-card">
+              <h3>Hourly Activity</h3>
+              <div id="chart-hourly-activity" class="chart-container"></div>
+            </div>
+            <div class="analytics-card">
+              <h3>Cost Estimate</h3>
+              <div id="chart-cost-estimate" class="chart-container"></div>
+            </div>
           </div>
         </div>
       </main>
