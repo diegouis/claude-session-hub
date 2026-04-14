@@ -447,7 +447,11 @@ const SessionHub = (() => {
     function getFilteredSessions(exclude) {
       let sessions = [...state.sessions];
       if (exclude !== 'status' && state.filters.status !== 'all') {
-        sessions = sessions.filter(s => s.status === state.filters.status);
+        if (state.filters.status === 'starred') {
+          sessions = sessions.filter(s => s.starred);
+        } else {
+          sessions = sessions.filter(s => s.status === state.filters.status);
+        }
       }
       if (exclude !== 'projects' && state.filters.projects.size > 0) {
         sessions = sessions.filter(s => state.filters.projects.has(s.project));
@@ -469,20 +473,23 @@ const SessionHub = (() => {
 
     // Status counts (exclude status filter so we see all statuses)
     const statusBase = getFilteredSessions('status');
-    const statusCounts = { all: 0, active: 0, idle: 0, stale: 0 };
+    const statusCounts = { all: 0, active: 0, idle: 0, stale: 0, starred: 0 };
     for (const s of statusBase) {
       statusCounts.all++;
       const st = s.status || 'stale';
       if (statusCounts[st] !== undefined) statusCounts[st]++;
+      if (s.starred) statusCounts.starred++;
     }
     const countAll = $('#count-all');
     const countActive = $('#count-active');
     const countIdle = $('#count-idle');
     const countStale = $('#count-stale');
+    const countStarred = $('#count-starred');
     if (countAll) countAll.textContent = statusCounts.all;
     if (countActive) countActive.textContent = statusCounts.active;
     if (countIdle) countIdle.textContent = statusCounts.idle;
     if (countStale) countStale.textContent = statusCounts.stale;
+    if (countStarred) countStarred.textContent = statusCounts.starred;
 
     // Length counts (exclude length filter so we see all buckets)
     const lengthBase = getFilteredSessions('length');
@@ -522,11 +529,20 @@ const SessionHub = (() => {
   // --- Filtering & Sorting ---
 
   function applyFilters() {
+    // If we're in analytics view and a filter was activated, switch to list view
+    if (state.currentView === 'analytics') {
+      showListView();
+    }
+
     let sessions = [...state.sessions];
 
     // Status filter
     if (state.filters.status !== 'all') {
-      sessions = sessions.filter(s => s.status === state.filters.status);
+      if (state.filters.status === 'starred') {
+        sessions = sessions.filter(s => s.starred);
+      } else {
+        sessions = sessions.filter(s => s.status === state.filters.status);
+      }
     }
 
     // Project filter
@@ -1416,7 +1432,7 @@ const SessionHub = (() => {
     svg += '</svg>';
     let legend = '<div class="chart-legend">';
     models.forEach((m, i) => {
-      const name = m.model.replace('claude-', '').replace(/-\d{8,}$/, '');
+      const name = m.model.replace(/^claude-/, '').replace(/-\d{8,}.*$/, '').replace(/-(\d+-\d+)$/, ' $1');
       legend += `<div class="legend-item"><span class="legend-dot" style="background:${colors[i % colors.length]}"></span><span class="legend-label">${escapeHtml(name)}</span><span class="legend-value">${m.percentage.toFixed(1)}%</span></div>`;
     });
     legend += '</div>';
@@ -1500,7 +1516,7 @@ const SessionHub = (() => {
     html += `<div class="cost-note">${escapeHtml(cost.note || 'Estimated based on API pricing')}</div>`;
     html += '<div class="cost-breakdown">';
     (cost.by_model || []).forEach(m => {
-      const name = m.model.replace('claude-', '').replace(/-\d{8,}$/, '');
+      const name = m.model.replace(/^claude-/, '').replace(/-\d{8,}.*$/, '').replace(/-(\d+-\d+)$/, ' $1');
       html += `<div class="cost-row"><span class="cost-model">${escapeHtml(name)}</span><span class="cost-amount">$${m.cost_usd.toFixed(2)}</span></div>`;
     });
     html += '</div>';
