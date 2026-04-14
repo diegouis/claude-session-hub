@@ -103,6 +103,7 @@ const SessionHub = (() => {
     dom.detailArchiveBtn = $('#detail-archive-btn');
     dom.detailDeleteBtn = $('#detail-delete-btn');
     dom.detailExportBtn = $('#detail-export-btn');
+    dom.detailRenameBtn = $('#detail-rename-btn');
     dom.analyticsView = $('#analytics-view');
     dom.analyticsBtn = $('#analytics-btn');
     dom.analyticsPeriod = $('#analytics-period-select');
@@ -744,6 +745,7 @@ const SessionHub = (() => {
     dom.detailDeleteBtn.onclick = () => confirmDeleteSession(sessionId);
     dom.detailExportBtn.onclick = () => exportSession(sessionId);
     dom.detailStarBtn.onclick = () => toggleStar(sessionId);
+    dom.detailRenameBtn.onclick = () => showRenameDialog(sessionId);
 
     // Load first page of messages
     await loadMessages(sessionId, 0);
