@@ -711,6 +711,7 @@ body {
 .detail-title-area {
   flex: 1;
   min-width: 200px;
+  overflow: hidden;
 }
 .detail-title {
   font-size: 18px;
@@ -731,8 +732,8 @@ body {
 .detail-title.editing {
   border-bottom-color: var(--accent);
   outline: none;
-  white-space: pre;
-  overflow: visible;
+  white-space: nowrap;
+  overflow: hidden;
   text-overflow: clip;
   background: var(--bg-input);
   padding: 2px 6px;
@@ -1214,9 +1215,15 @@ body {
   font-size: 18px;
   padding: 4px;
   line-height: 1;
+  color: var(--text-dim);
+  transition: transform 0.15s, color 0.15s;
 }
 .star-btn:hover {
   transform: scale(1.2);
+  color: var(--yellow);
+}
+.star-btn.starred {
+  color: var(--yellow);
 }
 
 /* --- Session Card Star --- */
