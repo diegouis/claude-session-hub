@@ -723,6 +723,7 @@ const SessionHub = (() => {
 
     const displayTitle = session.custom_label || session.title || 'Untitled session';
     dom.detailTitle.textContent = truncate(displayTitle, 200);
+    dom.detailTitle.title = displayTitle;
     const color = getProjectColor(session.project);
     dom.detailMeta.innerHTML = `
       ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
@@ -961,6 +962,7 @@ const SessionHub = (() => {
         applyFilters();
         if (state.currentSessionId === sessionId) {
           dom.detailTitle.textContent = truncate(newName, 200);
+          dom.detailTitle.title = newName;
         }
         toast('Session renamed', 'success');
       } catch (err) {
