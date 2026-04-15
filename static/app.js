@@ -766,13 +766,17 @@ const SessionHub = (() => {
     dom.detailTitle.textContent = truncate(displayTitle, 200);
     dom.detailTitle.title = displayTitle;
     const color = getProjectColor(session.project);
+    const tokenDetail = session.cache_read_tokens
+      ? ` (${formatNumber(session.cache_read_tokens)} cached)`
+      : '';
     dom.detailMeta.innerHTML = `
       ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
       ${renderStatusBadge(session.status)}
       <span>${formatRelativeTime(session.updated_at || session.created_at)}</span>
       <span>${session.message_count ?? 0} messages</span>
       ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
-      ${session.total_tokens != null ? `<span>${formatNumber(session.total_tokens)} tokens</span>` : ''}
+      ${session.total_tokens != null ? `<span title="Input + Output + Cache">${formatNumber(session.total_tokens)} tokens${tokenDetail}</span>` : ''}
+      ${session.cost_usd != null && session.cost_usd > 0.01 ? `<span class="detail-cost" title="Cache-aware cost estimate">$${session.cost_usd.toFixed(2)}</span>` : ''}
     `;
 
     // Update star button
@@ -1777,6 +1781,9 @@ const SessionHub = (() => {
     const container = document.getElementById('chart-cost-estimate');
     if (!container || !cost) return;
     let html = `<div class="cost-total">$${cost.total_usd.toFixed(2)}</div>`;
+    if (cost.cache_savings_usd && cost.cache_savings_usd > 0.01) {
+      html += `<div class="cost-savings">Saved <strong>$${cost.cache_savings_usd.toFixed(2)}</strong> via prompt caching</div>`;
+    }
     html += `<div class="cost-note">${escapeHtml(cost.note || 'Estimated based on API pricing')}</div>`;
     html += '<div class="cost-breakdown">';
     (cost.by_model || []).forEach(m => {

@@ -141,8 +141,20 @@ def _normalize_session(row_dict: dict, status: str = "idle") -> dict:
     """
     total_in = row_dict.get("total_input_tokens") or 0
     total_out = row_dict.get("total_output_tokens") or 0
+    cache_read = row_dict.get("cache_read_tokens") or 0
+    cache_create = row_dict.get("cache_create_tokens") or 0
     label = row_dict.get("label")
     title = label if label else (row_dict.get("first_user_message") or "")
+    # Cost estimate per session
+    model = row_dict.get("model") or ""
+    tier = _model_tier(model)
+    rates = _COST_RATES.get(tier, _COST_RATES["sonnet"])
+    session_cost = (
+        total_in / 1_000_000 * rates["input"]
+        + total_out / 1_000_000 * rates["output"]
+        + cache_read / 1_000_000 * rates["cache_read"]
+        + cache_create / 1_000_000 * rates["cache_create"]
+    )
     return {
         "id": row_dict["session_id"],
         "title": title,
@@ -155,9 +167,12 @@ def _normalize_session(row_dict: dict, status: str = "idle") -> dict:
         "user_message_count": row_dict.get("user_message_count", 0),
         "assistant_message_count": row_dict.get("assistant_message_count", 0),
         "model": row_dict.get("model"),
-        "total_tokens": total_in + total_out,
+        "total_tokens": total_in + total_out + cache_read + cache_create,
         "total_input_tokens": total_in,
         "total_output_tokens": total_out,
+        "cache_read_tokens": cache_read,
+        "cache_create_tokens": cache_create,
+        "cost_usd": round(session_cost, 2),
         "file_size": row_dict.get("file_size_bytes", 0),
         "updated_at": row_dict.get("ended_at"),
         "created_at": row_dict.get("started_at"),
@@ -998,9 +1013,10 @@ async def get_stats():
 # Cost estimation rates per 1M tokens
 # ---------------------------------------------------------------------------
 _COST_RATES = {
-    "opus":   {"input": 15.0,  "output": 75.0},
-    "sonnet": {"input": 3.0,   "output": 15.0},
-    "haiku":  {"input": 0.25,  "output": 1.25},
+    # per 1M tokens. cache_read = 10% of input, cache_create = 1.25x input
+    "opus":   {"input": 15.0,  "output": 75.0,  "cache_read": 1.50,  "cache_create": 18.75},
+    "sonnet": {"input": 3.0,   "output": 15.0,  "cache_read": 0.30,  "cache_create": 3.75},
+    "haiku":  {"input": 0.25,  "output": 1.25,  "cache_read": 0.025, "cache_create": 0.3125},
 }
 
 
@@ -1146,12 +1162,14 @@ async def get_analytics(days: int = Query(default=30, ge=1, le=365)):
         hour_map = {dict(r)["hour"]: dict(r)["sessions"] for r in hour_rows}
         hourly_activity = [{"hour": h, "sessions": hour_map.get(h, 0)} for h in range(24)]
 
-        # --- Cost estimate (within period) ---
+        # --- Cost estimate (within period, cache-aware) ---
         cost_rows = conn.execute("""
             SELECT
                 model,
                 COALESCE(SUM(total_input_tokens), 0) as input_tokens,
-                COALESCE(SUM(total_output_tokens), 0) as output_tokens
+                COALESCE(SUM(total_output_tokens), 0) as output_tokens,
+                COALESCE(SUM(cache_read_tokens), 0) as cache_read_tokens,
+                COALESCE(SUM(cache_create_tokens), 0) as cache_create_tokens
             FROM sessions
             WHERE started_at >= date('now', ?)
               AND model IS NOT NULL AND model != ''
@@ -1160,24 +1178,43 @@ async def get_analytics(days: int = Query(default=30, ge=1, le=365)):
         """, (f"-{days} days",)).fetchall()
         by_model = []
         total_cost = 0.0
+        total_savings = 0.0  # vs. no caching
         for r in cost_rows:
             d = dict(r)
             tier = _model_tier(d["model"])
             rates = _COST_RATES[tier]
-            cost = (d["input_tokens"] / 1_000_000 * rates["input"]
-                    + d["output_tokens"] / 1_000_000 * rates["output"])
+            # Actual cost with caching
+            cost = (
+                d["input_tokens"] / 1_000_000 * rates["input"]
+                + d["output_tokens"] / 1_000_000 * rates["output"]
+                + d["cache_read_tokens"] / 1_000_000 * rates["cache_read"]
+                + d["cache_create_tokens"] / 1_000_000 * rates["cache_create"]
+            )
+            # Hypothetical cost if all cache reads were fresh input
+            hypothetical = (
+                (d["input_tokens"] + d["cache_read_tokens"] + d["cache_create_tokens"])
+                / 1_000_000 * rates["input"]
+                + d["output_tokens"] / 1_000_000 * rates["output"]
+            )
+            savings = hypothetical - cost
             cost = round(cost, 2)
+            savings = round(savings, 2)
             total_cost += cost
+            total_savings += savings
             by_model.append({
                 "model": d["model"],
                 "input_tokens": d["input_tokens"],
                 "output_tokens": d["output_tokens"],
+                "cache_read_tokens": d["cache_read_tokens"],
+                "cache_create_tokens": d["cache_create_tokens"],
                 "cost_usd": cost,
+                "cache_savings_usd": savings,
             })
         cost_estimate = {
             "total_usd": round(total_cost, 2),
+            "cache_savings_usd": round(total_savings, 2),
             "by_model": by_model,
-            "note": "Estimated based on published API pricing. Actual costs may differ.",
+            "note": "Cache-aware estimate. Cache reads at 10% of input price; cache writes at 1.25x. Actual costs may differ.",
         }
 
         return {

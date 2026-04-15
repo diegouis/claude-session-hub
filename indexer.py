@@ -90,6 +90,10 @@ def migrate_db(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE sessions ADD COLUMN label TEXT")
     if "capabilities" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN capabilities TEXT")
+    if "cache_read_tokens" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN cache_read_tokens INTEGER DEFAULT 0")
+    if "cache_create_tokens" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN cache_create_tokens INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -140,6 +144,8 @@ def parse_jsonl(file_path: Path) -> dict:
         "model": None,
         "total_input_tokens": 0,
         "total_output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_create_tokens": 0,
         "git_branch": None,
         "version": None,
         "fts_texts": [],
@@ -229,6 +235,8 @@ def parse_jsonl(file_path: Path) -> dict:
                         if isinstance(usage, dict):
                             meta["total_input_tokens"] += usage.get("input_tokens", 0) or 0
                             meta["total_output_tokens"] += usage.get("output_tokens", 0) or 0
+                            meta["cache_read_tokens"] += usage.get("cache_read_input_tokens", 0) or 0
+                            meta["cache_create_tokens"] += usage.get("cache_creation_input_tokens", 0) or 0
 
                     # Extract tool_use blocks → capabilities
                     entry_uuid = entry.get("uuid", "")
@@ -432,6 +440,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
                 last_message_preview = ?, started_at = ?, ended_at = ?,
                 message_count = ?, user_message_count = ?, assistant_message_count = ?,
                 model = ?, total_input_tokens = ?, total_output_tokens = ?,
+                cache_read_tokens = ?, cache_create_tokens = ?,
                 file_size_bytes = ?, file_mtime = ?, file_path = ?,
                 is_subagent = ?, parent_session_id = ?, source = ?,
                 git_branch = ?, version = ?, is_empty = ?, is_tiny = ?,
@@ -444,6 +453,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
             meta["message_count"], meta["user_message_count"],
             meta["assistant_message_count"],
             meta["model"], meta["total_input_tokens"], meta["total_output_tokens"],
+            meta["cache_read_tokens"], meta["cache_create_tokens"],
             file_size, file_mtime, str(fpath),
             1 if file_info["is_subagent"] else 0,
             file_info["parent_session_id"], file_info["source"],
@@ -459,11 +469,12 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
                 last_message_preview, started_at, ended_at,
                 message_count, user_message_count, assistant_message_count,
                 model, total_input_tokens, total_output_tokens,
+                cache_read_tokens, cache_create_tokens,
                 file_size_bytes, file_mtime, file_path,
                 is_subagent, parent_session_id, source,
                 git_branch, version, is_empty, is_tiny,
                 capabilities, starred, label
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
         """, (
             session_id, meta["cwd"] or file_info["project_path"], meta["cwd"],
             meta["first_user_message"], meta["last_message_preview"],
@@ -471,6 +482,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
             meta["message_count"], meta["user_message_count"],
             meta["assistant_message_count"],
             meta["model"], meta["total_input_tokens"], meta["total_output_tokens"],
+            meta["cache_read_tokens"], meta["cache_create_tokens"],
             file_size, file_mtime, str(fpath),
             1 if file_info["is_subagent"] else 0,
             file_info["parent_session_id"], file_info["source"],
