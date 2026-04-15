@@ -88,6 +88,8 @@ def migrate_db(conn: sqlite3.Connection):
         conn.execute("ALTER TABLE sessions ADD COLUMN starred INTEGER DEFAULT 0")
     if "label" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN label TEXT")
+    if "capabilities" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN capabilities TEXT")
     conn.commit()
 
 
@@ -141,7 +143,16 @@ def parse_jsonl(file_path: Path) -> dict:
         "git_branch": None,
         "version": None,
         "fts_texts": [],
+        "capabilities": None,
     }
+
+    # Capability tracking
+    tools_count = {}
+    skills_count = {}
+    agents_count = {}
+    mcp_count = {}
+    slash_count = {}
+    tool_uuids = {}  # {tool_name: [uuid, ...]} — which messages used each tool
 
     line_count = 0
     try:
@@ -193,6 +204,14 @@ def parse_jsonl(file_path: Path) -> dict:
                             meta["first_user_message"] = text[:200]
                         meta["last_message_preview"] = text[:200]
                         meta["fts_texts"].append(text)
+                        # Detect slash commands
+                        stripped = text.lstrip()
+                        if stripped.startswith("/") and len(stripped) > 1:
+                            first_token = stripped.split(None, 1)[0]
+                            if len(first_token) < 40 and not first_token.startswith("//"):
+                                cmd = first_token.lstrip("/")
+                                if cmd and all(c.isalnum() or c in "-_:" for c in cmd):
+                                    slash_count[cmd] = slash_count.get(cmd, 0) + 1
 
                 elif entry_type == "assistant" or role == "assistant":
                     meta["assistant_message_count"] += 1
@@ -211,8 +230,72 @@ def parse_jsonl(file_path: Path) -> dict:
                             meta["total_input_tokens"] += usage.get("input_tokens", 0) or 0
                             meta["total_output_tokens"] += usage.get("output_tokens", 0) or 0
 
+                    # Extract tool_use blocks → capabilities
+                    entry_uuid = entry.get("uuid", "")
+                    content = message.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if not isinstance(block, dict) or block.get("type") != "tool_use":
+                                continue
+                            name = block.get("name", "")
+                            if not name:
+                                continue
+                            tools_count[name] = tools_count.get(name, 0) + 1
+                            if entry_uuid:
+                                tool_uuids.setdefault(name, []).append(entry_uuid)
+                            # MCP tool: mcp__<server>__<tool>
+                            if name.startswith("mcp__"):
+                                parts = name.split("__")
+                                if len(parts) >= 2:
+                                    server = parts[1]
+                                    mcp_count[server] = mcp_count.get(server, 0) + 1
+                            # Skill invocation
+                            elif name == "Skill":
+                                skill = ""
+                                inp = block.get("input", {})
+                                if isinstance(inp, dict):
+                                    skill = inp.get("skill", "")
+                                if skill:
+                                    skills_count[skill] = skills_count.get(skill, 0) + 1
+                            # Agent invocation
+                            elif name == "Agent":
+                                inp = block.get("input", {})
+                                sub = "general-purpose"
+                                if isinstance(inp, dict):
+                                    sub = inp.get("subagent_type") or "general-purpose"
+                                agents_count[sub] = agents_count.get(sub, 0) + 1
+
     except Exception as e:
         logger.error("Failed to parse %s: %s", file_path, e)
+
+    # Derive plugins from MCP server names and agent prefixes
+    plugins = set()
+    for server in mcp_count:
+        # e.g. "plugin_telegram_telegram" → "telegram"
+        # e.g. "claude_ai_Gmail" → "Gmail"
+        base = server
+        if base.startswith("plugin_"):
+            base = base[len("plugin_"):]
+        parts = base.split("_")
+        if parts:
+            plugins.add(parts[-1] if len(parts) > 1 else parts[0])
+    for agent_name in agents_count:
+        if ":" in agent_name:
+            plugins.add(agent_name.split(":", 1)[0])
+
+    # Only store capabilities if we found anything
+    has_caps = bool(tools_count or skills_count or agents_count or
+                    mcp_count or slash_count or plugins)
+    if has_caps:
+        meta["capabilities"] = {
+            "tools": tools_count,
+            "skills": skills_count,
+            "agents": agents_count,
+            "mcp_servers": mcp_count,
+            "slash_commands": slash_count,
+            "plugins": sorted(plugins),
+            "tool_uuids": tool_uuids,
+        }
 
     meta["_line_count"] = line_count
     return meta
@@ -333,6 +416,9 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
     is_empty = 1 if line_count == 0 else 0
     is_tiny = 1 if 0 < line_count <= 5 else 0
 
+    capabilities = meta.pop("capabilities", None)
+    caps_json = json.dumps(capabilities) if capabilities else None
+
     # Check if session already exists to preserve user-set fields (starred, label)
     existing = conn.execute(
         "SELECT session_id FROM sessions WHERE session_id = ?", (session_id,)
@@ -348,7 +434,8 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
                 model = ?, total_input_tokens = ?, total_output_tokens = ?,
                 file_size_bytes = ?, file_mtime = ?, file_path = ?,
                 is_subagent = ?, parent_session_id = ?, source = ?,
-                git_branch = ?, version = ?, is_empty = ?, is_tiny = ?
+                git_branch = ?, version = ?, is_empty = ?, is_tiny = ?,
+                capabilities = ?
             WHERE session_id = ?
         """, (
             meta["cwd"] or file_info["project_path"], meta["cwd"],
@@ -361,6 +448,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
             1 if file_info["is_subagent"] else 0,
             file_info["parent_session_id"], file_info["source"],
             meta["git_branch"], meta["version"], is_empty, is_tiny,
+            caps_json,
             session_id,
         ))
     else:
@@ -374,8 +462,8 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
                 file_size_bytes, file_mtime, file_path,
                 is_subagent, parent_session_id, source,
                 git_branch, version, is_empty, is_tiny,
-                starred, label
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
+                capabilities, starred, label
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, NULL)
         """, (
             session_id, meta["cwd"] or file_info["project_path"], meta["cwd"],
             meta["first_user_message"], meta["last_message_preview"],
@@ -387,6 +475,7 @@ def index_file(conn: sqlite3.Connection, file_info: dict) -> bool:
             1 if file_info["is_subagent"] else 0,
             file_info["parent_session_id"], file_info["source"],
             meta["git_branch"], meta["version"], is_empty, is_tiny,
+            caps_json,
         ))
 
     # Update FTS

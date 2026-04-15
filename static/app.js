@@ -29,6 +29,8 @@ const SessionHub = (() => {
     selectedIds: new Set(),
     trash: [],
     contextMenuSessionId: null,
+    capabilities: null,
+    capabilityFilter: null,
   };
 
   // Palette for project pills
@@ -108,6 +110,13 @@ const SessionHub = (() => {
     dom.analyticsBtn = $('#analytics-btn');
     dom.analyticsPeriod = $('#analytics-period-select');
     dom.resumeStatus = $('#resume-status');
+    dom.capabilitiesBar = $('#capabilities-bar');
+    dom.capabilitiesSummary = $('#capabilities-summary-text');
+    dom.capabilitiesDetails = $('#capabilities-details');
+    dom.capabilitiesToggle = $('#capabilities-toggle');
+    dom.capabilitiesFilterIndicator = $('#capabilities-filter-indicator');
+    dom.capabilitiesFilterText = $('#capabilities-filter-text');
+    dom.capabilitiesFilterClear = $('#capabilities-filter-clear');
   }
 
   // --- API Client ---
@@ -835,6 +844,9 @@ const SessionHub = (() => {
       };
     };
 
+    // Load capabilities
+    loadCapabilities(sessionId);
+
     // Load first page of messages
     await loadMessages(sessionId, 0);
   }
@@ -871,6 +883,7 @@ const SessionHub = (() => {
     const role = msg.role || 'system';
     const el = document.createElement('div');
     el.className = `message ${role}`;
+    if (msg.uuid) el.dataset.uuid = msg.uuid;
 
     let content = '';
 
@@ -1430,6 +1443,152 @@ const SessionHub = (() => {
     dom.analyticsView.classList.add('hidden');
     dom.analyticsBtn.classList.remove('active');
     dom.listView.classList.remove('hidden');
+    clearCapabilityFilter();
+    state.capabilities = null;
+    if (dom.capabilitiesBar) dom.capabilitiesBar.classList.add('hidden');
+    if (dom.capabilitiesDetails) {
+      dom.capabilitiesDetails.classList.add('hidden');
+      if (dom.capabilitiesToggle) dom.capabilitiesToggle.textContent = 'Show all ▼';
+    }
+  }
+
+  // --- Capabilities Bar ---
+
+  async function loadCapabilities(sessionId) {
+    try {
+      const caps = await api.get(`/api/sessions/${sessionId}/capabilities`);
+      state.capabilities = caps;
+      renderCapabilities(caps);
+    } catch (err) {
+      console.warn('Failed to load capabilities:', err);
+      dom.capabilitiesBar.classList.add('hidden');
+    }
+  }
+
+  function renderCapabilities(caps) {
+    const counts = {
+      tools: Object.keys(caps.tools || {}).length,
+      skills: Object.keys(caps.skills || {}).length,
+      agents: Object.keys(caps.agents || {}).length,
+      mcp: Object.keys(caps.mcp_servers || {}).length,
+      slash: Object.keys(caps.slash_commands || {}).length,
+      plugins: (caps.plugins || []).length,
+    };
+    const total = Object.values(counts).reduce((a, b) => a + b, 0);
+    if (total === 0) {
+      dom.capabilitiesBar.classList.add('hidden');
+      return;
+    }
+    dom.capabilitiesBar.classList.remove('hidden');
+
+    const summary = [];
+    if (counts.tools) summary.push(`${counts.tools} tool${counts.tools !== 1 ? 's' : ''}`);
+    if (counts.skills) summary.push(`${counts.skills} skill${counts.skills !== 1 ? 's' : ''}`);
+    if (counts.slash) summary.push(`${counts.slash} command${counts.slash !== 1 ? 's' : ''}`);
+    if (counts.agents) summary.push(`${counts.agents} agent${counts.agents !== 1 ? 's' : ''}`);
+    if (counts.mcp) summary.push(`${counts.mcp} MCP server${counts.mcp !== 1 ? 's' : ''}`);
+    if (counts.plugins) summary.push(`${counts.plugins} plugin${counts.plugins !== 1 ? 's' : ''}`);
+    dom.capabilitiesSummary.textContent = 'Used: ' + summary.join(' · ');
+
+    const groups = [
+      { icon: '🛠', label: 'Tools', data: caps.tools || {}, type: 'tool', filterable: true },
+      { icon: '⚡', label: 'Commands', data: caps.slash_commands || {}, type: 'slash', filterable: false },
+      { icon: '🎯', label: 'Skills', data: caps.skills || {}, type: 'skill', filterable: true },
+      { icon: '🤖', label: 'Agents', data: caps.agents || {}, type: 'agent', filterable: true },
+      { icon: '🔌', label: 'MCP', data: caps.mcp_servers || {}, type: 'mcp', filterable: false },
+    ];
+
+    let html = '';
+    for (const g of groups) {
+      const entries = Object.entries(g.data);
+      if (entries.length === 0) continue;
+      entries.sort((a, b) => b[1] - a[1]);
+      const pills = entries.map(([name, count]) => {
+        const filterable = g.filterable;
+        return `<span class="cap-pill${filterable ? '' : ' non-filterable'}" data-cap-type="${g.type}" data-cap-name="${escapeHtml(name)}" title="${escapeHtml(name)}">
+          ${escapeHtml(name)}
+          ${count > 1 ? `<span class="cap-pill-count">×${count}</span>` : ''}
+        </span>`;
+      }).join('');
+      html += `<div class="cap-group">
+        <span class="cap-group-label">${g.icon} ${g.label}</span>
+        <div class="cap-pills">${pills}</div>
+      </div>`;
+    }
+
+    if ((caps.plugins || []).length > 0) {
+      const pluginPills = caps.plugins.map(p =>
+        `<span class="cap-pill non-filterable" title="${escapeHtml(p)}">${escapeHtml(p)}</span>`
+      ).join('');
+      html += `<div class="cap-group">
+        <span class="cap-group-label">📦 Plugins</span>
+        <div class="cap-pills">${pluginPills}</div>
+      </div>`;
+    }
+
+    dom.capabilitiesDetails.innerHTML = html;
+
+    dom.capabilitiesDetails.querySelectorAll('.cap-pill:not(.non-filterable)').forEach(pill => {
+      pill.addEventListener('click', () => {
+        const type = pill.dataset.capType;
+        const name = pill.dataset.capName;
+        applyCapabilityFilter(type, name, pill);
+      });
+    });
+  }
+
+  function applyCapabilityFilter(type, name, pillEl) {
+    if (state.capabilityFilter && state.capabilityFilter.type === type && state.capabilityFilter.name === name) {
+      clearCapabilityFilter();
+      return;
+    }
+
+    state.capabilityFilter = { type, name };
+
+    dom.capabilitiesDetails.querySelectorAll('.cap-pill.active').forEach(p => p.classList.remove('active'));
+    pillEl.classList.add('active');
+
+    const uuids = new Set();
+    const caps = state.capabilities;
+    if (type === 'tool' && caps.tool_uuids && caps.tool_uuids[name]) {
+      caps.tool_uuids[name].forEach(u => uuids.add(u));
+    }
+    if (type === 'skill' && caps.tool_uuids && caps.tool_uuids['Skill']) {
+      caps.tool_uuids['Skill'].forEach(u => uuids.add(u));
+    }
+    if (type === 'agent' && caps.tool_uuids && caps.tool_uuids['Agent']) {
+      caps.tool_uuids['Agent'].forEach(u => uuids.add(u));
+    }
+
+    dom.conversation.classList.add('filtering');
+    dom.conversation.querySelectorAll('.message').forEach(msg => {
+      const uuid = msg.dataset.uuid;
+      if (uuids.has(uuid)) {
+        msg.classList.add('cap-match');
+      } else {
+        msg.classList.remove('cap-match');
+      }
+    });
+
+    dom.capabilitiesFilterText.textContent = `Showing messages that used: ${name}`;
+    dom.capabilitiesFilterIndicator.classList.remove('hidden');
+
+    const firstMatch = dom.conversation.querySelector('.message.cap-match');
+    if (firstMatch) firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function clearCapabilityFilter() {
+    state.capabilityFilter = null;
+    if (dom.capabilitiesDetails) {
+      dom.capabilitiesDetails.querySelectorAll('.cap-pill.active').forEach(p => p.classList.remove('active'));
+    }
+    if (dom.conversation) {
+      dom.conversation.classList.remove('filtering');
+      dom.conversation.querySelectorAll('.message.cap-match').forEach(m => m.classList.remove('cap-match'));
+    }
+    if (dom.capabilitiesFilterIndicator) {
+      dom.capabilitiesFilterIndicator.classList.add('hidden');
+    }
   }
 
   // --- Analytics ---
@@ -1960,6 +2119,23 @@ const SessionHub = (() => {
 
     // Back button
     dom.backBtn.addEventListener('click', showListView);
+
+    // Capabilities bar toggle & filter clear
+    if (dom.capabilitiesToggle) {
+      dom.capabilitiesToggle.addEventListener('click', () => {
+        const expanded = !dom.capabilitiesDetails.classList.contains('hidden');
+        if (expanded) {
+          dom.capabilitiesDetails.classList.add('hidden');
+          dom.capabilitiesToggle.textContent = 'Show all ▼';
+        } else {
+          dom.capabilitiesDetails.classList.remove('hidden');
+          dom.capabilitiesToggle.textContent = 'Hide ▲';
+        }
+      });
+    }
+    if (dom.capabilitiesFilterClear) {
+      dom.capabilitiesFilterClear.addEventListener('click', clearCapabilityFilter);
+    }
 
     // Reindex
     dom.reindexBtn.addEventListener('click', reindex);

@@ -237,6 +237,20 @@
               </button>
             </div>
           </div>
+          <div id="capabilities-bar" class="capabilities-bar hidden">
+            <div class="capabilities-summary" id="capabilities-summary">
+              <span class="cap-icon">⚡</span>
+              <span id="capabilities-summary-text">Loading capabilities...</span>
+              <button class="capabilities-toggle" id="capabilities-toggle">Show all ▼</button>
+            </div>
+            <div class="capabilities-details hidden" id="capabilities-details">
+              <!-- Populated by JS -->
+            </div>
+            <div class="capabilities-filter-indicator hidden" id="capabilities-filter-indicator">
+              <span id="capabilities-filter-text"></span>
+              <button id="capabilities-filter-clear">Clear filter</button>
+            </div>
+          </div>
           <div id="resume-status" class="resume-status hidden"></div>
           <div class="conversation" id="conversation">
             <!-- Messages populated by JS -->
