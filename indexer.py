@@ -129,6 +129,35 @@ def _extract_text(content) -> str:
     return ""
 
 
+_CMD_NAME_RE = re.compile(r"<command-name>(.*?)</command-name>", re.DOTALL)
+_CMD_ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.DOTALL)
+_ANY_XML_TAG_RE = re.compile(r"<[a-z-]+>.*?</[a-z-]+>", re.DOTALL)
+
+
+def _clean_first_message(text: str) -> str:
+    """Clean XML-wrapped slash command messages into a readable form.
+
+    "<command-name>/prime</command-name><command-args>foo bar</command-args>"
+    → "/prime foo bar"
+    """
+    if not text:
+        return text
+    if "<command-name>" not in text:
+        return text
+    name_match = _CMD_NAME_RE.search(text)
+    if not name_match:
+        return text
+    name = name_match.group(1).strip()
+    args_match = _CMD_ARGS_RE.search(text)
+    args = args_match.group(1).strip() if args_match else ""
+    # Strip any remaining XML-like command blocks
+    remainder = _ANY_XML_TAG_RE.sub("", text).strip()
+    cleaned = f"{name} {args}".strip()
+    if remainder:
+        cleaned = f"{cleaned} — {remainder[:100]}"
+    return cleaned
+
+
 def parse_jsonl(file_path: Path) -> dict:
     """Parse a single JSONL session file and return extracted metadata."""
     meta = {
@@ -206,12 +235,14 @@ def parse_jsonl(file_path: Path) -> dict:
                     meta["message_count"] += 1
                     text = _extract_text(message.get("content", ""))
                     if text:
+                        display_text = _clean_first_message(text)
                         if meta["first_user_message"] is None:
-                            meta["first_user_message"] = text[:200]
-                        meta["last_message_preview"] = text[:200]
+                            meta["first_user_message"] = display_text[:200]
+                        meta["last_message_preview"] = display_text[:200]
                         meta["fts_texts"].append(text)
-                        # Detect slash commands
-                        stripped = text.lstrip()
+                        # Detect slash commands — check cleaned display_text so
+                        # command-wrapped forms are captured too
+                        stripped = display_text.lstrip()
                         if stripped.startswith("/") and len(stripped) > 1:
                             first_token = stripped.split(None, 1)[0]
                             if len(first_token) < 40 and not first_token.startswith("//"):
