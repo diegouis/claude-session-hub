@@ -372,6 +372,34 @@ async def get_messages(
         conn.close()
 
 
+@app.get("/api/sessions/{session_id}/capabilities")
+async def get_capabilities(session_id: str):
+    """Return the structured capabilities for a session (tools, skills, agents, etc)."""
+    conn = _get_conn()
+    try:
+        row = conn.execute(
+            "SELECT capabilities FROM sessions WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Session not found")
+        empty = {
+            "tools": {}, "skills": {}, "agents": {}, "mcp_servers": {},
+            "slash_commands": {}, "plugins": [], "tool_uuids": {},
+        }
+        if not row["capabilities"]:
+            return empty
+        try:
+            data = json.loads(row["capabilities"])
+            # Ensure all expected keys exist
+            for k, v in empty.items():
+                data.setdefault(k, v)
+            return data
+        except (json.JSONDecodeError, TypeError):
+            return empty
+    finally:
+        conn.close()
+
+
 def _load_messages(file_path: str, page: int, limit: int) -> dict:
     """Load paginated messages from a JSONL file.
 
