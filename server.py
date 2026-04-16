@@ -132,13 +132,21 @@ def _project_short_name(path: str) -> str:
     return parts[-1] if parts else path
 
 
-def _normalize_session(row_dict: dict, status: str = "idle") -> dict:
+def _normalize_session(row_dict: dict, status="idle") -> dict:
     """Transform a DB row dict into the shape the frontend expects.
 
-    Frontend expects: id, title, project, status, message_count, model,
-    total_tokens, file_size, updated_at, created_at, is_subagent,
-    parent_session_id, source, git_branch, version, cwd, project_path.
+    `status` may be either a legacy string ("active"/"idle"/"stale") or a
+    status dict {"status", "confidence", "reason"} from get_all_session_statuses.
     """
+    if isinstance(status, dict):
+        status_str = status.get("status", "idle")
+        confidence = status.get("confidence")
+        status_reason = status.get("reason", "")
+    else:
+        status_str = status
+        confidence = None
+        status_reason = ""
+
     total_in = row_dict.get("total_input_tokens") or 0
     total_out = row_dict.get("total_output_tokens") or 0
     cache_read = row_dict.get("cache_read_tokens") or 0
@@ -158,11 +166,14 @@ def _normalize_session(row_dict: dict, status: str = "idle") -> dict:
     return {
         "id": row_dict["session_id"],
         "title": title,
+        "first_user_message": row_dict.get("first_user_message"),
         "starred": bool(row_dict.get("starred")),
         "label": label,
         "project": _project_short_name(row_dict.get("project_path", "")),
         "project_path": row_dict.get("project_path", ""),
-        "status": status,
+        "status": status_str,
+        "status_confidence": confidence,
+        "status_reason": status_reason,
         "message_count": row_dict.get("message_count", 0),
         "user_message_count": row_dict.get("user_message_count", 0),
         "assistant_message_count": row_dict.get("assistant_message_count", 0),
@@ -318,12 +329,13 @@ async def list_sessions(
 
         raw_sessions = _rows_to_list(rows)
 
-        # Compute statuses in bulk
+        # Compute statuses in bulk — returns {sid: {status, confidence, reason}}
         statuses = get_all_session_statuses(raw_sessions)
+        _DEFAULT_STATUS = {"status": "idle", "confidence": None, "reason": ""}
 
         sessions = []
         for s in raw_sessions:
-            st = statuses.get(s["session_id"], "idle")
+            st = statuses.get(s["session_id"], _DEFAULT_STATUS)
             sessions.append(_normalize_session(s, st))
 
         # Filter by status if requested
@@ -354,14 +366,9 @@ async def get_session(session_id: str):
             raise HTTPException(404, "Session not found")
 
         session = _row_to_dict(row)
-        active = get_active_sessions()
-        st = get_session_status(
-            session_id,
-            file_mtime=session.get("file_mtime"),
-            is_tiny=bool(session.get("is_tiny")),
-            active_sessions=active,
-        )
-
+        # Use the richer bulk call so we get confidence + reason
+        statuses = get_all_session_statuses([session])
+        st = statuses.get(session_id, {"status": "idle", "confidence": None, "reason": ""})
         return _normalize_session(session, st)
     finally:
         conn.close()
@@ -537,12 +544,13 @@ async def search(q: str = Query(..., min_length=1)):
 
         raw = _rows_to_list(rows)
         statuses = get_all_session_statuses(raw)
+        _DEFAULT = {"status": "idle", "confidence": None, "reason": ""}
 
         results = []
         for r in raw:
             snippet = r.pop("snippet", "")
             r.pop("rank", None)
-            st = statuses.get(r["session_id"], "idle")
+            st = statuses.get(r["session_id"], _DEFAULT)
             session = _normalize_session(r, st)
             session["snippet"] = snippet
             results.append(session)
