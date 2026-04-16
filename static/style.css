@@ -499,24 +499,29 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 4px 4px;
+  padding: 10px 8px 6px;
   margin-top: 8px;
   cursor: pointer;
   user-select: none;
+  border-radius: var(--radius-sm);
+  transition: background 0.15s;
 }
 .session-group-header:hover {
-  opacity: 0.85;
+  background: var(--bg-card);
 }
 .session-group-header:first-child {
   margin-top: 0;
 }
 .session-group-chevron {
   flex-shrink: 0;
-  transition: transform 0.2s;
+  font-size: 14px;
   color: var(--text-dim);
+  width: 18px;
+  text-align: center;
+  transition: color 0.15s;
 }
-.session-group-chevron.open {
-  transform: rotate(90deg);
+.session-group-header:hover .session-group-chevron {
+  color: var(--accent);
 }
 .session-group-pill {
   display: inline-flex;
