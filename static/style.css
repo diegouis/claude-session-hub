@@ -501,9 +501,22 @@ body {
   gap: 10px;
   padding: 8px 4px 4px;
   margin-top: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.session-group-header:hover {
+  opacity: 0.85;
 }
 .session-group-header:first-child {
   margin-top: 0;
+}
+.session-group-chevron {
+  flex-shrink: 0;
+  transition: transform 0.2s;
+  color: var(--text-dim);
+}
+.session-group-chevron.open {
+  transform: rotate(90deg);
 }
 .session-group-pill {
   display: inline-flex;
@@ -518,6 +531,14 @@ body {
   flex: 1;
   height: 1px;
   background: var(--border);
+}
+.session-group-items {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
+}
+.session-group-items.collapsed {
+  max-height: 0 !important;
+  overflow: hidden;
 }
 
 /* Session Card */

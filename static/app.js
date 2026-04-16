@@ -421,23 +421,49 @@ const SessionHub = (() => {
       grouped.get(proj).push(s);
     }
 
+    // Track collapsed state per project (persists across re-renders)
+    if (!state._collapsedGroups) state._collapsedGroups = new Set();
+
     for (const [project, items] of grouped) {
       const color = getProjectColor(project);
+      const isCollapsed = state._collapsedGroups.has(project);
+
       const header = document.createElement('div');
       header.className = 'session-group-header';
       header.innerHTML = `
+        <svg class="session-group-chevron ${isCollapsed ? '' : 'open'}" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
+          <path d="M4 2l5 4-5 4z"/>
+        </svg>
         <span class="session-group-pill" style="background:${color}22;color:${color}">
           <span style="width:8px;height:8px;border-radius:2px;background:${color};display:inline-block"></span>
           ${escapeHtml(project)} (${items.length})
         </span>
         <span class="session-group-line"></span>
       `;
+      header.addEventListener('click', () => {
+        if (state._collapsedGroups.has(project)) {
+          state._collapsedGroups.delete(project);
+        } else {
+          state._collapsedGroups.add(project);
+        }
+        // Toggle visibility of items + chevron without full re-render
+        const chevron = header.querySelector('.session-group-chevron');
+        const container = header.nextElementSibling;
+        if (container && container.classList.contains('session-group-items')) {
+          container.classList.toggle('collapsed');
+          chevron.classList.toggle('open');
+        }
+      });
       list.appendChild(header);
 
+      // Wrap items in a container for collapsing
+      const itemsContainer = document.createElement('div');
+      itemsContainer.className = `session-group-items ${isCollapsed ? 'collapsed' : ''}`;
       for (const session of items) {
         const snippet = session._searchSnippet || null;
-        list.appendChild(renderSessionCard(session, snippet));
+        itemsContainer.appendChild(renderSessionCard(session, snippet));
       }
+      list.appendChild(itemsContainer);
     }
   }
 
