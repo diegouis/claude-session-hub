@@ -31,7 +31,22 @@ const SessionHub = (() => {
     contextMenuSessionId: null,
     capabilities: null,
     capabilityFilter: null,
+    settings: {
+      titleMode: 'first',     // 'first' | 'last'
+      filterMode: 'composable', // 'composable' | 'single'
+    },
   };
+
+  // Load persisted settings
+  const SETTINGS_KEY = 'session-hub-settings';
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    if (saved) Object.assign(state.settings, saved);
+  } catch {}
+
+  function saveSettings() {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
+  }
 
   // Palette for project pills
   const PROJECT_COLORS = [
@@ -290,7 +305,10 @@ const SessionHub = (() => {
 
     const isSelected = state.selectedIds.has(session.id);
     const untitledFallback = `Session ${(session.id || '').substring(0, 8)} · ${formatRelativeTime(session.created_at)}`;
-    const displayTitle = session.label || session.custom_label || session.title || untitledFallback;
+    const baseTitle = state.settings.titleMode === 'last'
+      ? (session.last_message_preview || session.title || untitledFallback)
+      : (session.title || untitledFallback);
+    const displayTitle = session.label || session.custom_label || baseTitle;
     const subtitle = (session.label || session.custom_label) && session.title ? session.title : null;
     const starHtml = session.starred ? '<span class="star-icon">&#11088;</span>' : '';
     const subagentHtml = session.is_subagent ? '<span class="subagent-badge">subagent</span>' : '';
@@ -483,6 +501,9 @@ const SessionHub = (() => {
         <span class="project-count">${p.count}</span>
       `;
       label.querySelector('input').addEventListener('change', (e) => {
+        if (state.settings.filterMode === 'single') {
+          resetOtherFilters('projects');
+        }
         if (e.target.checked) {
           state.filters.projects.add(p.name);
         } else {
@@ -598,6 +619,25 @@ const SessionHub = (() => {
   }
 
   // --- Filtering & Sorting ---
+
+  // In single filter mode, reset other filter groups when one changes
+  function resetOtherFilters(except) {
+    if (state.settings.filterMode !== 'single') return;
+    if (except !== 'status') {
+      state.filters.status = 'all';
+      const r = dom.statusFilters && dom.statusFilters.querySelector('input[value="all"]');
+      if (r) r.checked = true;
+    }
+    if (except !== 'length') {
+      state.filters.length = 'all';
+      const r = dom.lengthFilters && dom.lengthFilters.querySelector('input[value="all"]');
+      if (r) r.checked = true;
+    }
+    if (except !== 'projects') {
+      state.filters.projects.clear();
+      if (dom.projectFilters) dom.projectFilters.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+    }
+  }
 
   function applyFilters() {
     // If we're in analytics view and a filter was activated, switch to list view
@@ -2189,6 +2229,7 @@ const SessionHub = (() => {
     // Status filters
     dom.statusFilters.addEventListener('change', (e) => {
       if (e.target.name === 'status') {
+        resetOtherFilters('status');
         state.filters.status = e.target.value;
         applyFilters();
       }
@@ -2206,6 +2247,7 @@ const SessionHub = (() => {
     // Length filters
     dom.lengthFilters.addEventListener('change', (e) => {
       if (e.target.name === 'length') {
+        resetOtherFilters('length');
         state.filters.length = e.target.value;
         applyFilters();
       }
@@ -2341,6 +2383,34 @@ const SessionHub = (() => {
     // Cleanup and Trash buttons
     dom.cleanupBtn.addEventListener('click', showCleanupDialog);
     dom.trashBtn.addEventListener('click', showTrashDialog);
+
+    // Settings dialog
+    const settingsBtn = $('#settings-btn');
+    const settingsDialog = $('#settings-dialog');
+    const settingsClose = $('#settings-close');
+    const settingsSave = $('#settings-save');
+    if (settingsBtn && settingsDialog) {
+      settingsBtn.addEventListener('click', () => {
+        // Populate current values
+        const titleRadio = settingsDialog.querySelector(`input[name="setting-title-mode"][value="${state.settings.titleMode}"]`);
+        if (titleRadio) titleRadio.checked = true;
+        const filterRadio = settingsDialog.querySelector(`input[name="setting-filter-mode"][value="${state.settings.filterMode}"]`);
+        if (filterRadio) filterRadio.checked = true;
+        settingsDialog.classList.remove('hidden');
+      });
+      settingsClose.addEventListener('click', () => settingsDialog.classList.add('hidden'));
+      settingsDialog.querySelector('.modal-backdrop').addEventListener('click', () => settingsDialog.classList.add('hidden'));
+      settingsSave.addEventListener('click', () => {
+        const titleMode = settingsDialog.querySelector('input[name="setting-title-mode"]:checked');
+        const filterMode = settingsDialog.querySelector('input[name="setting-filter-mode"]:checked');
+        if (titleMode) state.settings.titleMode = titleMode.value;
+        if (filterMode) state.settings.filterMode = filterMode.value;
+        saveSettings();
+        settingsDialog.classList.add('hidden');
+        toast('Settings saved', 'success');
+        applyFilters(); // re-render with new settings
+      });
+    }
   }
 
   // --- Init ---

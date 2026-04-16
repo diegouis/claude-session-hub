@@ -163,6 +163,7 @@
           </button>
           <button class="btn btn-ghost btn-block" id="cleanup-btn">🧹 Clean Up Sessions</button>
           <button class="btn btn-ghost btn-block" id="trash-btn">🗑️ View Trash</button>
+          <button class="btn btn-ghost btn-block" id="settings-btn">⚙️ Settings</button>
         </div>
       </aside>
 
@@ -357,6 +358,49 @@
         <div class="modal-actions">
           <button class="btn btn-ghost" id="trash-close">Close</button>
           <button class="btn btn-danger" id="trash-empty">Empty Trash</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Dialog -->
+    <div id="settings-dialog" class="modal hidden">
+      <div class="modal-backdrop"></div>
+      <div class="modal-content">
+        <h3>Settings</h3>
+
+        <div class="settings-group">
+          <label class="settings-label">Session Title Display</label>
+          <p class="settings-desc">Choose what text to show as the session title in the list.</p>
+          <div class="settings-options">
+            <label class="settings-option">
+              <input type="radio" name="setting-title-mode" value="first" checked>
+              <span>First message</span>
+            </label>
+            <label class="settings-option">
+              <input type="radio" name="setting-title-mode" value="last">
+              <span>Last message</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="settings-group">
+          <label class="settings-label">Filter Mode</label>
+          <p class="settings-desc">How sidebar filters combine when multiple are selected.</p>
+          <div class="settings-options">
+            <label class="settings-option">
+              <input type="radio" name="setting-filter-mode" value="composable" checked>
+              <span>Composable (AND) — all filters apply together</span>
+            </label>
+            <label class="settings-option">
+              <input type="radio" name="setting-filter-mode" value="single">
+              <span>Single — selecting a filter resets others</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="btn btn-ghost" id="settings-close">Close</button>
+          <button class="btn btn-primary" id="settings-save">Save</button>
         </div>
       </div>
     </div>
