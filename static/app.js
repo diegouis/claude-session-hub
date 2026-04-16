@@ -430,10 +430,9 @@ const SessionHub = (() => {
 
       const header = document.createElement('div');
       header.className = 'session-group-header';
+      const chevronChar = isCollapsed ? '&#9654;' : '&#9660;';
       header.innerHTML = `
-        <svg class="session-group-chevron ${isCollapsed ? '' : 'open'}" width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
-          <path d="M4 2l5 4-5 4z"/>
-        </svg>
+        <span class="session-group-chevron ${isCollapsed ? '' : 'open'}">${chevronChar}</span>
         <span class="session-group-pill" style="background:${color}22;color:${color}">
           <span style="width:8px;height:8px;border-radius:2px;background:${color};display:inline-block"></span>
           ${escapeHtml(project)} (${items.length})
@@ -441,17 +440,19 @@ const SessionHub = (() => {
         <span class="session-group-line"></span>
       `;
       header.addEventListener('click', () => {
-        if (state._collapsedGroups.has(project)) {
-          state._collapsedGroups.delete(project);
-        } else {
+        const nowCollapsed = !state._collapsedGroups.has(project);
+        if (nowCollapsed) {
           state._collapsedGroups.add(project);
+        } else {
+          state._collapsedGroups.delete(project);
         }
-        // Toggle visibility of items + chevron without full re-render
         const chevron = header.querySelector('.session-group-chevron');
         const container = header.nextElementSibling;
         if (container && container.classList.contains('session-group-items')) {
           container.classList.toggle('collapsed');
           chevron.classList.toggle('open');
+          // Swap arrow character: ▶ (right) when collapsed, ▼ (down) when expanded
+          chevron.innerHTML = nowCollapsed ? '&#9654;' : '&#9660;';
         }
       });
       list.appendChild(header);
