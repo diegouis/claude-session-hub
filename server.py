@@ -285,7 +285,10 @@ def _get_resume_command(cwd: str, session_id: str) -> tuple[list[str], str]:
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
+    # cache_bust forces browsers to fetch fresh JS/CSS after deploys
+    import hashlib
+    bust = hashlib.md5(str(os.path.getmtime(STATIC_DIR / "app.js")).encode()).hexdigest()[:8]
+    return templates.TemplateResponse("index.html", {"request": request, "cache_bust": bust})
 
 
 @app.get("/api/sessions")
