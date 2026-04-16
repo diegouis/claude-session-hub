@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Session Hub</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
 </head>
 <body>
   <div id="app">
@@ -378,6 +378,6 @@
     <div class="toast-container" id="toast-container"></div>
   </div>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v={{ cache_bust }}"></script>
 </body>
 </html>
