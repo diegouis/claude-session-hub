@@ -18,8 +18,17 @@ STALE_DAYS = 30
 ACTIVE_MTIME_WINDOW = 300  # 5 minutes
 
 
+_TASK_DIR_RE = re.compile(r"/\.claude/tasks/([a-f0-9-]{36})")
+
+
 def _get_claude_processes() -> list[dict]:
-    """Get info about running claude processes: pid, cwd, args, session_id (if --resume)."""
+    """Get info about running claude processes.
+
+    Returns a list of dicts with:
+      pid, cwd, args, session_id (from --resume flag),
+      task_session_ids (session IDs found in /tasks/ dirs held open by lsof),
+      is_telegram
+    """
     processes = []
     try:
         result = subprocess.run(
@@ -31,7 +40,11 @@ def _get_claude_processes() -> list[dict]:
         return processes
 
     for pid in pids:
-        info = {"pid": pid, "cwd": None, "args": "", "session_id": None, "is_telegram": False}
+        info = {
+            "pid": pid, "cwd": None, "args": "",
+            "session_id": None, "task_session_ids": set(),
+            "is_telegram": False,
+        }
 
         # Get command args
         try:
@@ -51,22 +64,41 @@ def _get_claude_processes() -> list[dict]:
         resume_match = re.search(r'--resume\s+(\S+)', info["args"])
         if resume_match:
             info["session_id"] = resume_match.group(1)
-        # Also check -r flag
         r_match = re.search(r'\s-r\s+(\S+)', info["args"])
         if r_match and not info["session_id"]:
             info["session_id"] = r_match.group(1)
 
-        # Get cwd via lsof
+        # lsof: cwd + any /tasks/<uuid>/ dirs held open (running tool strong signal)
         try:
             lsof_result = subprocess.run(
-                ["lsof", "-p", str(pid), "-Fd", "-Fn"],
+                ["lsof", "-p", str(pid)],
                 capture_output=True, text=True, timeout=5,
             )
-            lines = lsof_result.stdout.splitlines()
-            for i, line in enumerate(lines):
-                if line == "fcwd" and i + 1 < len(lines) and lines[i + 1].startswith("n"):
-                    info["cwd"] = lines[i + 1][1:]
-                    break
+            # Get cwd
+            for line in lsof_result.stdout.splitlines():
+                if " cwd " in line or "\tcwd\t" in line:
+                    # lsof cwd line format: COMMAND PID USER fcwd DIR ... /path
+                    parts = line.split(None, 8)
+                    if len(parts) >= 9:
+                        info["cwd"] = parts[8]
+                        break
+                    # Fallback: parse with -Fn
+            if not info["cwd"]:
+                try:
+                    f_result = subprocess.run(
+                        ["lsof", "-p", str(pid), "-Fd", "-Fn"],
+                        capture_output=True, text=True, timeout=5,
+                    )
+                    lines = f_result.stdout.splitlines()
+                    for i, line in enumerate(lines):
+                        if line == "fcwd" and i + 1 < len(lines) and lines[i + 1].startswith("n"):
+                            info["cwd"] = lines[i + 1][1:]
+                            break
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    pass
+            # Find all /tasks/<session-id>/ dirs in open files
+            for match in _TASK_DIR_RE.findall(lsof_result.stdout):
+                info["task_session_ids"].add(match)
         except (subprocess.TimeoutExpired, FileNotFoundError):
             pass
 
@@ -128,33 +160,57 @@ def _find_recently_modified_sessions(db_path: Optional[Path] = None) -> dict[str
 def get_active_sessions() -> set[str]:
     """Return session_ids that currently have a live Claude process.
 
-    Strategy:
-    1. For processes with --resume/-r flags: direct session_id match
-    2. For bare `claude` processes: match cwd against recently-modified session files
-    3. Exclude telegram bot processes from session matching
+    Kept for backwards compatibility. Uses `get_active_session_map` under
+    the hood and returns the set of all active (running OR open) sessions.
+    """
+    return set(get_active_session_map().keys())
+
+
+def get_active_session_map() -> dict[str, str]:
+    """Return {session_id: confidence} where confidence is:
+
+      "running"  — process currently executing a tool for this session
+                   (we see /tasks/<session-id>/ held open via lsof, OR
+                    --resume <id> in process args)
+      "open"     — terminal/process is alive, session file was modified
+                   recently, and the process cwd matches the session cwd
+                   (likely "you have the terminal open but claude is idle")
+
+    Both are "active" from the user's perspective; the distinction gives
+    us tooltip detail. When claude exits (/exit or terminal close), the
+    process dies and the session drops out of this map on next poll.
     """
     processes = _get_claude_processes()
     recent_sessions = _find_recently_modified_sessions()
-    active = set()
+    active = {}  # session_id -> confidence
 
-    # Build a set of cwds that have active non-telegram claude processes
     active_cwds = set()
+    running_task_ids = set()
+    resumed_ids = set()
+
     for proc in processes:
         if proc["is_telegram"]:
             continue
-
-        # Direct match via --resume flag
+        # Strong signal: /tasks/<session-id>/ held open
+        for sid in proc.get("task_session_ids", ()):  # set
+            running_task_ids.add(sid)
+        # Strong signal: --resume <id> in command args
         if proc["session_id"]:
-            active.add(proc["session_id"])
-            continue
-
-        if proc["cwd"]:
+            resumed_ids.add(proc["session_id"])
+        # Weak signal: cwd of bare `claude` processes
+        if not proc["session_id"] and proc["cwd"]:
             active_cwds.add(proc["cwd"])
 
-    # Match recently-modified sessions to active cwds (using real cwds from DB)
+    for sid in running_task_ids:
+        active[sid] = "running"
+    for sid in resumed_ids:
+        active.setdefault(sid, "running")
+
+    # Recently-modified sessions whose cwd matches a live non-telegram process
     for session_id, cwd in recent_sessions.items():
-        if cwd in active_cwds:
-            active.add(session_id)
+        if cwd in active_cwds or session_id in resumed_ids:
+            # Don't downgrade a "running" session to "open"
+            active.setdefault(session_id, "open")
 
     return active
 
@@ -165,13 +221,7 @@ def get_session_status(
     is_tiny: bool = False,
     active_sessions: Optional[set[str]] = None,
 ) -> str:
-    """Determine session status.
-
-    Returns:
-        "active" — has a running process
-        "idle"   — no process, mtime within 30 days
-        "stale"  — no process, mtime older than 30 days or file is tiny
-    """
+    """Return broad status bucket (backwards-compatible)."""
     if active_sessions is None:
         active_sessions = get_active_sessions()
 
@@ -189,15 +239,47 @@ def get_session_status(
     return "idle"
 
 
-def get_all_session_statuses(sessions: list[dict]) -> dict[str, str]:
-    """Bulk-compute statuses for a list of session dicts."""
-    active = get_active_sessions()
+def get_all_session_statuses(sessions: list[dict]) -> dict[str, dict]:
+    """Bulk-compute statuses for a list of session dicts.
+
+    Returns {session_id: {"status": "active"|"idle"|"stale",
+                          "confidence": "running"|"open"|None,
+                          "reason": human-readable str}}
+    """
+    active_map = get_active_session_map()
+    active_set = set(active_map.keys())
+    now = time.time()
     result = {}
     for s in sessions:
-        result[s["session_id"]] = get_session_status(
-            s["session_id"],
-            file_mtime=s.get("file_mtime"),
-            is_tiny=s.get("is_tiny", False),
-            active_sessions=active,
-        )
+        sid = s["session_id"]
+        file_mtime = s.get("file_mtime")
+        is_tiny = s.get("is_tiny", False)
+        if sid in active_set:
+            confidence = active_map[sid]
+            if confidence == "running":
+                reason = "A Claude process is currently working on this session (tool active or resumed with -r)."
+            else:
+                reason = "Claude is running in this session's working directory and the session file was modified recently."
+            result[sid] = {
+                "status": "active",
+                "confidence": confidence,
+                "reason": reason,
+            }
+            continue
+        if is_tiny:
+            result[sid] = {
+                "status": "stale", "confidence": None,
+                "reason": "Session has 5 or fewer messages — likely abandoned.",
+            }
+            continue
+        if file_mtime is not None and (now - file_mtime) / 86400 > STALE_DAYS:
+            result[sid] = {
+                "status": "stale", "confidence": None,
+                "reason": f"Session hasn't been touched in over {STALE_DAYS} days.",
+            }
+            continue
+        result[sid] = {
+            "status": "idle", "confidence": None,
+            "reason": "No live Claude process found for this session. Resumable via `claude -r`.",
+        }
     return result

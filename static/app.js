@@ -259,9 +259,26 @@ const SessionHub = (() => {
 
   // --- Rendering ---
 
-  function renderStatusBadge(status) {
+  function renderStatusBadge(status, session) {
     const s = status || 'stale';
-    return `<span class="status-badge ${s}"><span class="badge-dot"></span>${s}</span>`;
+    // Build explanatory tooltip
+    let tooltip = '';
+    if (session && session.status_reason) {
+      tooltip = session.status_reason;
+    } else {
+      tooltip = {
+        active: 'A Claude process is running for this session.',
+        idle: 'No live process — session is resumable.',
+        stale: 'Old or abandoned session.',
+      }[s] || '';
+    }
+    // Show confidence suffix on active
+    let label = s;
+    if (s === 'active' && session && session.status_confidence === 'running') {
+      label = 'running';
+    }
+    const esc = (t) => t.replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    return `<span class="status-badge ${s}" title="${esc(tooltip)}"><span class="badge-dot"></span>${label}</span>`;
   }
 
   function renderSessionCard(session, snippet) {
@@ -277,6 +294,17 @@ const SessionHub = (() => {
     const subtitle = (session.label || session.custom_label) && session.title ? session.title : null;
     const starHtml = session.starred ? '<span class="star-icon">&#11088;</span>' : '';
     const subagentHtml = session.is_subagent ? '<span class="subagent-badge">subagent</span>' : '';
+    // Build title tooltip: full first user message + meta summary
+    const fullMessage = session.title || displayTitle;
+    const ageStr = formatRelativeTime(session.updated_at || session.created_at);
+    const tooltipLines = [];
+    tooltipLines.push(fullMessage);
+    tooltipLines.push('');
+    tooltipLines.push(`${session.message_count ?? 0} messages · ${ageStr}`);
+    if (session.model) tooltipLines.push(`Model: ${session.model}`);
+    if (session.project) tooltipLines.push(`Project: ${session.project}`);
+    if (session.cost_usd != null && session.cost_usd > 0.01) tooltipLines.push(`Cost: $${session.cost_usd.toFixed(2)}`);
+    const titleTooltip = tooltipLines.join('\n').replace(/"/g, '&quot;');
 
     card.innerHTML = `
       ${state.selectMode ? `<div class="session-card-checkbox ${isSelected ? 'checked' : ''}" data-select-id="${session.id}"></div>` : ''}
@@ -284,7 +312,7 @@ const SessionHub = (() => {
         <div class="session-card-title-row">
           ${starHtml}
           ${subagentHtml}
-          <div class="session-card-title">${escapeHtml(truncate(displayTitle, 120))}</div>
+          <div class="session-card-title" title="${escapeHtml(titleTooltip)}">${escapeHtml(truncate(displayTitle, 120))}</div>
         </div>
         ${subtitle ? `<div class="session-card-subtitle">${escapeHtml(truncate(subtitle, 100))}</div>` : ''}
         ${session.project ? `
@@ -303,7 +331,7 @@ const SessionHub = (() => {
       </div>
       <div class="session-card-right">
         <span class="session-card-time">${formatRelativeTime(session.updated_at || session.created_at)}</span>
-        ${renderStatusBadge(session.status)}
+        ${renderStatusBadge(session.status, session)}
         <button class="btn btn-secondary btn-sm card-resume-btn" data-resume="${session.id}" title="Resume session" onclick="event.stopPropagation()">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
           Resume
@@ -771,7 +799,7 @@ const SessionHub = (() => {
       : '';
     dom.detailMeta.innerHTML = `
       ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
-      ${renderStatusBadge(session.status)}
+      ${renderStatusBadge(session.status, session)}
       <span>${formatRelativeTime(session.updated_at || session.created_at)}</span>
       <span>${session.message_count ?? 0} messages</span>
       ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
@@ -848,8 +876,8 @@ const SessionHub = (() => {
       };
     };
 
-    // Load capabilities
-    loadCapabilities(sessionId);
+    // Load capabilities (passes session so we can build About block)
+    loadCapabilities(sessionId, session);
 
     // Load first page of messages
     await loadMessages(sessionId, 0);
@@ -1458,18 +1486,18 @@ const SessionHub = (() => {
 
   // --- Capabilities Bar ---
 
-  async function loadCapabilities(sessionId) {
+  async function loadCapabilities(sessionId, session) {
     try {
       const caps = await api.get(`/api/sessions/${sessionId}/capabilities`);
       state.capabilities = caps;
-      renderCapabilities(caps);
+      renderCapabilities(caps, session);
     } catch (err) {
       console.warn('Failed to load capabilities:', err);
       dom.capabilitiesBar.classList.add('hidden');
     }
   }
 
-  function renderCapabilities(caps) {
+  function renderCapabilities(caps, session) {
     const counts = {
       tools: Object.keys(caps.tools || {}).length,
       skills: Object.keys(caps.skills || {}).length,
@@ -1479,7 +1507,8 @@ const SessionHub = (() => {
       plugins: (caps.plugins || []).length,
     };
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
-    if (total === 0) {
+    const hasAbout = session && (session.title || session.label);
+    if (total === 0 && !hasAbout) {
       dom.capabilitiesBar.classList.add('hidden');
       return;
     }
@@ -1492,7 +1521,45 @@ const SessionHub = (() => {
     if (counts.agents) summary.push(`${counts.agents} agent${counts.agents !== 1 ? 's' : ''}`);
     if (counts.mcp) summary.push(`${counts.mcp} MCP server${counts.mcp !== 1 ? 's' : ''}`);
     if (counts.plugins) summary.push(`${counts.plugins} plugin${counts.plugins !== 1 ? 's' : ''}`);
-    dom.capabilitiesSummary.textContent = 'Used: ' + summary.join(' · ');
+    dom.capabilitiesSummary.textContent = summary.length ? 'Used: ' + summary.join(' · ') : 'Session overview';
+
+    // Build About block first
+    let html = '';
+    if (session) {
+      const firstMsg = session.first_user_message || session.title || session.label || '';
+      const aboutLines = [];
+      if (firstMsg) aboutLines.push(`<div class="about-first-message">${escapeHtml(firstMsg)}</div>`);
+      const facts = [];
+      if (session.message_count != null) facts.push(`<strong>${session.message_count}</strong> messages`);
+      if (session.model) facts.push(escapeHtml(session.model));
+      if (session.created_at && session.updated_at) {
+        const start = new Date(session.created_at);
+        const end = new Date(session.updated_at);
+        const durMs = end - start;
+        const durMin = Math.round(durMs / 60000);
+        if (durMin > 0) {
+          const durStr = durMin < 60 ? `${durMin}m` : `${Math.round(durMin / 60 * 10) / 10}h`;
+          facts.push(`${durStr} duration`);
+        }
+      }
+      if (session.cost_usd != null && session.cost_usd > 0.01) {
+        facts.push(`<strong>$${session.cost_usd.toFixed(2)}</strong> cost`);
+      }
+      if (session.cache_read_tokens) {
+        facts.push(`${formatNumber(session.cache_read_tokens)} cached tokens`);
+      }
+      if (facts.length) {
+        aboutLines.push(`<div class="about-facts">${facts.join(' · ')}</div>`);
+      }
+      if (aboutLines.length) {
+        html += `<div class="cap-group cap-about">
+          <span class="cap-group-label">📝 About</span>
+          <div class="cap-pills" style="flex-direction:column;align-items:flex-start">
+            ${aboutLines.join('')}
+          </div>
+        </div>`;
+      }
+    }
 
     const groups = [
       { icon: '🛠', label: 'Tools', data: caps.tools || {}, type: 'tool', filterable: true },
@@ -1502,7 +1569,6 @@ const SessionHub = (() => {
       { icon: '🔌', label: 'MCP', data: caps.mcp_servers || {}, type: 'mcp', filterable: false },
     ];
 
-    let html = '';
     for (const g of groups) {
       const entries = Object.entries(g.data);
       if (entries.length === 0) continue;
