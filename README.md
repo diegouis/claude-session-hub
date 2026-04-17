@@ -26,7 +26,7 @@ Claude Code saves every session to disk, but there's no way to:
 - **Trash & restore** — deleted sessions go to trash, not oblivion
 - **Export** — download any session as Markdown
 - **Subagent awareness** — subagent sessions show a badge and resume the parent
-- **Dark theme** — matches your terminal aesthetic
+- **Light, dark, and system themes** — editorial palette, toggle in settings
 - **100% local** — no cloud, no telemetry, no accounts, reads only from your local disk
 
 ### Search & Detail View
@@ -40,6 +40,12 @@ Claude Code saves every session to disk, but there's no way to:
 | Context menu | Bulk select | Cleanup |
 |---|---|---|
 | ![Context menu](docs/images/context_menu.png) | ![Bulk select](docs/images/bulk_select.png) | ![Cleanup](docs/images/cleanup.png) |
+
+### Light & Dark Themes
+
+| Light | Settings |
+|---|---|
+| ![Light theme](docs/images/dashboard_light.png) | ![Theme settings](docs/images/settings_theme.png) |
 
 ## Quick Start
 
