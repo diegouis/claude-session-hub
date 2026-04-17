@@ -34,6 +34,7 @@ const SessionHub = (() => {
     settings: {
       titleMode: 'first',     // 'first' | 'last'
       filterMode: 'composable', // 'composable' | 'single'
+      theme: 'system',        // 'system' | 'light' | 'dark'
     },
   };
 
@@ -47,6 +48,13 @@ const SessionHub = (() => {
   function saveSettings() {
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings));
   }
+
+  function applyTheme(theme) {
+    const t = (theme === 'light' || theme === 'dark') ? theme : 'system';
+    document.documentElement.setAttribute('data-theme', t);
+  }
+  // Apply on load (in case the <head> bootstrap was missed, or settings changed via code)
+  applyTheme(state.settings.theme);
 
   // Palette for project pills
   const PROJECT_COLORS = [
@@ -2396,15 +2404,29 @@ const SessionHub = (() => {
         if (titleRadio) titleRadio.checked = true;
         const filterRadio = settingsDialog.querySelector(`input[name="setting-filter-mode"][value="${state.settings.filterMode}"]`);
         if (filterRadio) filterRadio.checked = true;
+        const themeRadio = settingsDialog.querySelector(`input[name="setting-theme"][value="${state.settings.theme}"]`);
+        if (themeRadio) themeRadio.checked = true;
         settingsDialog.classList.remove('hidden');
       });
-      settingsClose.addEventListener('click', () => settingsDialog.classList.add('hidden'));
-      settingsDialog.querySelector('.modal-backdrop').addEventListener('click', () => settingsDialog.classList.add('hidden'));
+      // Live-preview theme as the user picks (no save required)
+      settingsDialog.addEventListener('change', (e) => {
+        if (e.target.name === 'setting-theme') applyTheme(e.target.value);
+      });
+      const closeDialog = () => {
+        settingsDialog.classList.add('hidden');
+        // Revert any live-preview if user dismissed without saving
+        applyTheme(state.settings.theme);
+      };
+      settingsClose.addEventListener('click', closeDialog);
+      settingsDialog.querySelector('.modal-backdrop').addEventListener('click', closeDialog);
       settingsSave.addEventListener('click', () => {
         const titleMode = settingsDialog.querySelector('input[name="setting-title-mode"]:checked');
         const filterMode = settingsDialog.querySelector('input[name="setting-filter-mode"]:checked');
+        const theme = settingsDialog.querySelector('input[name="setting-theme"]:checked');
         if (titleMode) state.settings.titleMode = titleMode.value;
         if (filterMode) state.settings.filterMode = filterMode.value;
+        if (theme) state.settings.theme = theme.value;
+        applyTheme(state.settings.theme);
         saveSettings();
         settingsDialog.classList.add('hidden');
         toast('Settings saved', 'success');
