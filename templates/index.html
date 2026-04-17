@@ -1,11 +1,22 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="system">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Claude Session Hub</title>
   <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
+  <script>
+    // Apply persisted theme before first paint (no FOUC).
+    try {
+      var s = JSON.parse(localStorage.getItem('session-hub-settings') || '{}');
+      var t = s.theme === 'light' || s.theme === 'dark' ? s.theme : 'system';
+      document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* defaults to system from markup */ }
+  </script>
 </head>
 <body>
   <div id="app">
@@ -34,8 +45,8 @@
           <span class="stat-value" id="stat-projects">--</span>
           <span class="stat-label">Projects</span>
         </div>
-        <button class="btn btn-secondary btn-select-mode" id="select-mode-btn" title="Toggle selection mode">
-          Select
+        <button class="btn btn-secondary btn-select-mode" id="select-mode-btn" title="Select multiple sessions for bulk actions">
+          Select multiple
         </button>
         <button class="btn btn-secondary" id="reindex-btn" title="Re-index sessions">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
@@ -50,11 +61,12 @@
       <!-- Sidebar -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-section">
+          <label for="search-input" class="field-label">Search</label>
           <div class="search-box">
-            <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <svg class="search-icon" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
               <path d="M11.742 10.344a6.5 6.5 0 1 0-1.397 1.398l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.868-3.834zm-5.242.156a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/>
             </svg>
-            <input type="text" id="search-input" placeholder="Search sessions..." autocomplete="off">
+            <input type="text" id="search-input" placeholder="Full-text across all sessions" autocomplete="off">
             <button class="search-clear hidden" id="search-clear">&times;</button>
             <div id="search-history" class="search-history hidden">
               <!-- Populated by JS -->
@@ -367,6 +379,25 @@
       <div class="modal-backdrop"></div>
       <div class="modal-content">
         <h3>Settings</h3>
+
+        <div class="settings-group">
+          <label class="settings-label">Appearance</label>
+          <p class="settings-desc">Choose light, dark, or follow your system.</p>
+          <div class="settings-options settings-options-row">
+            <label class="settings-option">
+              <input type="radio" name="setting-theme" value="system">
+              <span>System</span>
+            </label>
+            <label class="settings-option">
+              <input type="radio" name="setting-theme" value="light">
+              <span>Light</span>
+            </label>
+            <label class="settings-option">
+              <input type="radio" name="setting-theme" value="dark">
+              <span>Dark</span>
+            </label>
+          </div>
+        </div>
 
         <div class="settings-group">
           <label class="settings-label">Session Title Display</label>
