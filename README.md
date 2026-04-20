@@ -15,7 +15,7 @@ Claude Code saves every session to disk, but there's no way to:
 
 ## Features
 
-- **609+ sessions indexed** — reads directly from `~/.claude/projects/`
+- **All your sessions, indexed** — reads directly from `~/.claude/projects/`
 - **Full-text search** — find any session by content, not just title
 - **Active session detection** — see which sessions have running processes (green badge)
 - **One-click resume** — opens Terminal.app with the right session loaded
