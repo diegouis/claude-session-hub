@@ -63,6 +63,14 @@ async def _poll_for_changes():
 async def lifespan(app: FastAPI):
     """Startup: reindex, start watcher. Shutdown: stop watcher."""
     global _watcher_task
+    from indexer import PROJECTS_DIR
+    if not PROJECTS_DIR.is_dir():
+        logger.warning(
+            "No sessions found at %s — the dashboard will be empty until "
+            "you run Claude Code. Set CLAUDE_DIR to point elsewhere if your "
+            "sessions live in a non-default location.",
+            PROJECTS_DIR,
+        )
     logger.info("Running startup reindex...")
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, reindex_incremental)
@@ -288,7 +296,7 @@ async def index(request: Request):
     # cache_bust forces browsers to fetch fresh JS/CSS after deploys
     import hashlib
     bust = hashlib.md5(str(os.path.getmtime(STATIC_DIR / "app.js")).encode()).hexdigest()[:8]
-    return templates.TemplateResponse("index.html", {"request": request, "cache_bust": bust})
+    return templates.TemplateResponse(request, "index.html", {"cache_bust": bust})
 
 
 @app.get("/api/sessions")

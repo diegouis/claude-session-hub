@@ -2,7 +2,7 @@
 import os
 from playwright.sync_api import sync_playwright
 
-BASE_URL = "http://127.0.0.1:7778"
+BASE_URL = os.environ.get("SESSION_HUB_URL", "http://127.0.0.1:7777")
 SCREENSHOTS_DIR = os.path.join(os.path.dirname(__file__), "screenshots")
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
