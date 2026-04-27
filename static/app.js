@@ -861,6 +861,29 @@ const SessionHub = (() => {
 
   // --- Session Detail ---
 
+  function renderSessionDetailHeader(session, sessionId) {
+    const detailFallback = `Session ${(sessionId || '').substring(0, 8)} · ${formatTimeDisplay(session.created_at)}`;
+    const displayTitle = session.custom_label || session.title || detailFallback;
+    dom.detailTitle.textContent = truncate(displayTitle, 200);
+    dom.detailTitle.title = displayTitle;
+
+    const color = getProjectColor(session.project);
+    const tokenDetail = session.cache_read_tokens
+      ? ` (${formatNumber(session.cache_read_tokens)} cached)`
+      : '';
+    dom.detailMeta.innerHTML = `
+      ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
+      ${renderStatusBadge(session.status, session)}
+      <span>${formatTimeDisplay(session.updated_at || session.created_at)}</span>
+      <span>${session.message_count ?? 0} messages</span>
+      ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
+      ${session.total_tokens != null ? `<span title="Input + Output + Cache">${formatNumber(session.total_tokens)} tokens${tokenDetail}</span>` : ''}
+      ${session.cost_usd != null && session.cost_usd > 0.01 ? `<span class="detail-cost" title="Cache-aware cost estimate">$${session.cost_usd.toFixed(2)}</span>` : ''}
+    `;
+
+    updateDetailStarButton(session);
+  }
+
   async function showSessionDetail(sessionId) {
     state.currentView = 'detail';
     state.currentSessionId = sessionId;
@@ -885,26 +908,7 @@ const SessionHub = (() => {
       }
     }
 
-    const detailFallback = `Session ${(sessionId || '').substring(0, 8)} · ${formatTimeDisplay(session.created_at)}`;
-    const displayTitle = session.custom_label || session.title || detailFallback;
-    dom.detailTitle.textContent = truncate(displayTitle, 200);
-    dom.detailTitle.title = displayTitle;
-    const color = getProjectColor(session.project);
-    const tokenDetail = session.cache_read_tokens
-      ? ` (${formatNumber(session.cache_read_tokens)} cached)`
-      : '';
-    dom.detailMeta.innerHTML = `
-      ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
-      ${renderStatusBadge(session.status, session)}
-      <span>${formatTimeDisplay(session.updated_at || session.created_at)}</span>
-      <span>${session.message_count ?? 0} messages</span>
-      ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
-      ${session.total_tokens != null ? `<span title="Input + Output + Cache">${formatNumber(session.total_tokens)} tokens${tokenDetail}</span>` : ''}
-      ${session.cost_usd != null && session.cost_usd > 0.01 ? `<span class="detail-cost" title="Cache-aware cost estimate">$${session.cost_usd.toFixed(2)}</span>` : ''}
-    `;
-
-    // Update star button
-    updateDetailStarButton(session);
+    renderSessionDetailHeader(session, sessionId);
 
     // Set up resume button
     dom.resumeBtn.onclick = () => resumeSession(sessionId);
@@ -2456,6 +2460,10 @@ const SessionHub = (() => {
         settingsDialog.classList.add('hidden');
         toast('Settings saved', 'success');
         applyFilters(); // re-render with new settings
+        if (state.currentView === 'detail' && state.currentSessionId) {
+          const currentSession = state.sessions.find(s => s.id === state.currentSessionId);
+          if (currentSession) renderSessionDetailHeader(currentSession, state.currentSessionId);
+        }
       });
     }
   }
