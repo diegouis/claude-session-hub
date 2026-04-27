@@ -35,6 +35,7 @@ const SessionHub = (() => {
       titleMode: 'first',     // 'first' | 'last'
       filterMode: 'composable', // 'composable' | 'single'
       theme: 'system',        // 'system' | 'light' | 'dark'
+      timeDisplay: 'relative', // 'relative' | 'exact'
     },
   };
 
@@ -179,6 +180,7 @@ const SessionHub = (() => {
   function formatRelativeTime(dateStr) {
     if (!dateStr) return '';
     const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return '';
     const now = new Date();
     const diffMs = now - date;
     const diffSec = Math.floor(diffMs / 1000);
@@ -193,6 +195,25 @@ const SessionHub = (() => {
     if (diffDay < 7) return `${diffDay}d ago`;
     if (diffWeek < 5) return `${diffWeek}w ago`;
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  function formatExactTime(dateStr) {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
+
+  function formatTimeDisplay(dateStr) {
+    return state.settings.timeDisplay === 'exact'
+      ? formatExactTime(dateStr)
+      : formatRelativeTime(dateStr);
   }
 
   function formatNumber(n) {
@@ -312,7 +333,7 @@ const SessionHub = (() => {
     card.dataset.sessionId = session.id;
 
     const isSelected = state.selectedIds.has(session.id);
-    const untitledFallback = `Session ${(session.id || '').substring(0, 8)} · ${formatRelativeTime(session.created_at)}`;
+    const untitledFallback = `Session ${(session.id || '').substring(0, 8)} · ${formatTimeDisplay(session.created_at)}`;
     const baseTitle = state.settings.titleMode === 'last'
       ? (session.last_message_preview || session.title || untitledFallback)
       : (session.title || untitledFallback);
@@ -322,7 +343,7 @@ const SessionHub = (() => {
     const subagentHtml = session.is_subagent ? '<span class="subagent-badge">subagent</span>' : '';
     // Build title tooltip: full first user message + meta summary
     const fullMessage = session.title || displayTitle;
-    const ageStr = formatRelativeTime(session.updated_at || session.created_at);
+    const ageStr = formatTimeDisplay(session.updated_at || session.created_at);
     const tooltipLines = [];
     tooltipLines.push(fullMessage);
     tooltipLines.push('');
@@ -356,7 +377,7 @@ const SessionHub = (() => {
         ${snippet ? `<div class="search-snippet">${snippet}</div>` : ''}
       </div>
       <div class="session-card-right">
-        <span class="session-card-time">${formatRelativeTime(session.updated_at || session.created_at)}</span>
+        <span class="session-card-time">${formatTimeDisplay(session.updated_at || session.created_at)}</span>
         ${renderStatusBadge(session.status, session)}
         <button class="btn btn-secondary btn-sm card-resume-btn" data-resume="${session.id}" title="Resume session" onclick="event.stopPropagation()">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6V2z"/></svg>
@@ -840,6 +861,29 @@ const SessionHub = (() => {
 
   // --- Session Detail ---
 
+  function renderSessionDetailHeader(session, sessionId) {
+    const detailFallback = `Session ${(sessionId || '').substring(0, 8)} · ${formatTimeDisplay(session.created_at)}`;
+    const displayTitle = session.custom_label || session.title || detailFallback;
+    dom.detailTitle.textContent = truncate(displayTitle, 200);
+    dom.detailTitle.title = displayTitle;
+
+    const color = getProjectColor(session.project);
+    const tokenDetail = session.cache_read_tokens
+      ? ` (${formatNumber(session.cache_read_tokens)} cached)`
+      : '';
+    dom.detailMeta.innerHTML = `
+      ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
+      ${renderStatusBadge(session.status, session)}
+      <span>${formatTimeDisplay(session.updated_at || session.created_at)}</span>
+      <span>${session.message_count ?? 0} messages</span>
+      ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
+      ${session.total_tokens != null ? `<span title="Input + Output + Cache">${formatNumber(session.total_tokens)} tokens${tokenDetail}</span>` : ''}
+      ${session.cost_usd != null && session.cost_usd > 0.01 ? `<span class="detail-cost" title="Cache-aware cost estimate">$${session.cost_usd.toFixed(2)}</span>` : ''}
+    `;
+
+    updateDetailStarButton(session);
+  }
+
   async function showSessionDetail(sessionId) {
     state.currentView = 'detail';
     state.currentSessionId = sessionId;
@@ -864,26 +908,7 @@ const SessionHub = (() => {
       }
     }
 
-    const detailFallback = `Session ${(sessionId || '').substring(0, 8)} · ${formatRelativeTime(session.created_at)}`;
-    const displayTitle = session.custom_label || session.title || detailFallback;
-    dom.detailTitle.textContent = truncate(displayTitle, 200);
-    dom.detailTitle.title = displayTitle;
-    const color = getProjectColor(session.project);
-    const tokenDetail = session.cache_read_tokens
-      ? ` (${formatNumber(session.cache_read_tokens)} cached)`
-      : '';
-    dom.detailMeta.innerHTML = `
-      ${session.project ? `<span class="session-card-project"><span class="project-dot" style="background:${color}"></span>${escapeHtml(session.project)}</span>` : ''}
-      ${renderStatusBadge(session.status, session)}
-      <span>${formatRelativeTime(session.updated_at || session.created_at)}</span>
-      <span>${session.message_count ?? 0} messages</span>
-      ${session.model ? `<span>${escapeHtml(session.model)}</span>` : ''}
-      ${session.total_tokens != null ? `<span title="Input + Output + Cache">${formatNumber(session.total_tokens)} tokens${tokenDetail}</span>` : ''}
-      ${session.cost_usd != null && session.cost_usd > 0.01 ? `<span class="detail-cost" title="Cache-aware cost estimate">$${session.cost_usd.toFixed(2)}</span>` : ''}
-    `;
-
-    // Update star button
-    updateDetailStarButton(session);
+    renderSessionDetailHeader(session, sessionId);
 
     // Set up resume button
     dom.resumeBtn.onclick = () => resumeSession(sessionId);
@@ -1514,7 +1539,7 @@ const SessionHub = (() => {
       const filename = entry.filename || entry.name || 'unknown';
       const displayName = filename.replace(/\.jsonl$/, '').replace(/_/g, ' ');
       const size = formatBytes(entry.size || 0);
-      const date = entry.date_moved ? formatRelativeTime(entry.date_moved) : '';
+      const date = entry.date_moved ? formatTimeDisplay(entry.date_moved) : '';
 
       const item = document.createElement('div');
       item.className = 'trash-item';
@@ -2406,6 +2431,8 @@ const SessionHub = (() => {
         if (filterRadio) filterRadio.checked = true;
         const themeRadio = settingsDialog.querySelector(`input[name="setting-theme"][value="${state.settings.theme}"]`);
         if (themeRadio) themeRadio.checked = true;
+        const timeDisplayRadio = settingsDialog.querySelector(`input[name="setting-time-display"][value="${state.settings.timeDisplay}"]`);
+        if (timeDisplayRadio) timeDisplayRadio.checked = true;
         settingsDialog.classList.remove('hidden');
       });
       // Live-preview theme as the user picks (no save required)
@@ -2423,14 +2450,20 @@ const SessionHub = (() => {
         const titleMode = settingsDialog.querySelector('input[name="setting-title-mode"]:checked');
         const filterMode = settingsDialog.querySelector('input[name="setting-filter-mode"]:checked');
         const theme = settingsDialog.querySelector('input[name="setting-theme"]:checked');
+        const timeDisplay = settingsDialog.querySelector('input[name="setting-time-display"]:checked');
         if (titleMode) state.settings.titleMode = titleMode.value;
         if (filterMode) state.settings.filterMode = filterMode.value;
         if (theme) state.settings.theme = theme.value;
+        if (timeDisplay) state.settings.timeDisplay = timeDisplay.value;
         applyTheme(state.settings.theme);
         saveSettings();
         settingsDialog.classList.add('hidden');
         toast('Settings saved', 'success');
         applyFilters(); // re-render with new settings
+        if (state.currentView === 'detail' && state.currentSessionId) {
+          const currentSession = state.sessions.find(s => s.id === state.currentSessionId);
+          if (currentSession) renderSessionDetailHeader(currentSession, state.currentSessionId);
+        }
       });
     }
   }
