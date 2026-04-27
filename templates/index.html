@@ -429,6 +429,21 @@
           </div>
         </div>
 
+        <div class="settings-group">
+          <label class="settings-label">Session Time Display</label>
+          <p class="settings-desc">Show timestamps as relative age or exact local time.</p>
+          <div class="settings-options">
+            <label class="settings-option">
+              <input type="radio" name="setting-time-display" value="relative" checked>
+              <span>Relative (10h ago)</span>
+            </label>
+            <label class="settings-option">
+              <input type="radio" name="setting-time-display" value="exact">
+              <span>Exact (Apr 27, 2026, 4:23 PM)</span>
+            </label>
+          </div>
+        </div>
+
         <div class="modal-actions">
           <button class="btn btn-ghost" id="settings-close">Close</button>
           <button class="btn btn-primary" id="settings-save">Save</button>
